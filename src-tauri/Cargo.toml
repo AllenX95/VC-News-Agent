@@ -1,0 +1,16 @@
+[package]
+name = "ai-investment-agent"
+version = "0.1.0"
+description = "AI Investment Intelligence Agent desktop shell"
+authors = ["AI Investment Agent"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

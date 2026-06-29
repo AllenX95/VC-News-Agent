@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.log
+data/*.sqlite3
+data/*.sqlite3-*
+data/secret.key
+backups/*.sqlite3
+archives/*
+node_modules/
+frontend/node_modules/
+frontend/dist/
+src-tauri/target/
+logs/*.port
+release/

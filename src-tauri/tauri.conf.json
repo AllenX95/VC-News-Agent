@@ -1,0 +1,36 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "AI 投资情报 Agent",
+  "version": "0.1.0",
+  "identifier": "com.local.ai-investment-agent",
+  "build": {
+    "beforeDevCommand": "npm run dev --workspace frontend",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build --workspace frontend",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AI 投资情报 Agent",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 700
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
+  }
+}
