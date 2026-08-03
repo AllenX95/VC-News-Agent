@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -17,8 +18,10 @@ from .database import SessionLocal, get_db
 from .models import (
     BackupRecord,
     ContentItem,
+    CrawlJob,
     DailySummary,
     Entity,
+    ReportVersion,
     LLMConfig,
     LLMLog,
     LLMTask,
@@ -27,6 +30,9 @@ from .models import (
     SystemSetting,
     TagDefinition,
 )
+from .intelligence import IntelligenceInbox
+from .financing_events import EventConflictError, FinancingEventCatalog
+from .reports import ReportWorkspace
 from .security import decrypt_value, encrypt_value, mask_secret
 from .seed import LLM_TASKS, ensure_llm_defaults
 from .services import (
@@ -50,10 +56,35 @@ from .services import (
     set_setting,
 )
 from .utils import json_loads
+from .v03_contracts import (
+    BuildEventRequest,
+    EventQuery,
+    ExportReportCommand,
+    GenerateReportCommand,
+    ReportPreviewRequest,
+    ReportStatusCommand,
+    ReviseEventCommand,
+    ReviseReportCommand,
+    ReorganizeEventCommand,
+    SaveWatchCommand,
+    UpdateWatchCommand,
+    WatchQuery,
+)
+from .watchlist import WatchConflictError, Watchlist
 
 
 router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 weekly_crawl_lock = threading.Lock()
+intelligence_inbox = IntelligenceInbox()
+financing_event_catalog = FinancingEventCatalog()
+watchlist = Watchlist()
+report_workspace = ReportWorkspace()
+
+
+class IntelligenceReviewRequest(BaseModel):
+    decision: str
+    note: str | None = None
+
 
 SOURCE_CATEGORY_ORDER = {
     "venture_media": 0,
@@ -334,10 +365,35 @@ def _parse_query_date(value: str | None) -> date | None:
         raise HTTPException(status_code=422, detail="Date must use YYYY-MM-DD format") from exc
 
 
-def _run_crawl_background(run_timestamp: datetime | None = None) -> None:
+def _run_crawl_background(run_timestamp: datetime | None = None, job_id: int | None = None) -> None:
     run_timestamp = run_timestamp or db_now()
     with SessionLocal() as db:
-        CrawlService().run_all_sources(db, manual=True, run_timestamp=run_timestamp)
+        job = db.get(CrawlJob, job_id) if job_id else None
+        if job:
+            job.status = "running"
+            job.started_at = db_now()
+            db.commit()
+        try:
+            run = CrawlService().run_all_sources(db, manual=True, run_timestamp=run_timestamp)
+            progress = crawl_progress.snapshot()
+            if job:
+                job.status = "succeeded" if run.status == "success" else run.status
+                job.finished_at = db_now()
+                job.total_sources = progress.get("total_sources", 0)
+                job.failed_sources = progress.get("failed_sources", 0)
+                job.succeeded_sources = max(0, progress.get("completed_sources", 0) - job.failed_sources)
+                job.message = run.message or progress.get("message", "")
+                db.commit()
+        except Exception as exc:
+            if job:
+                db.rollback()
+                job = db.get(CrawlJob, job_id)
+                if job:
+                    job.status = "failed"
+                    job.finished_at = db_now()
+                    job.message = str(exc)
+                    db.commit()
+            raise
 
 
 def _run_weekly_crawl_background(date_strings: list[str]) -> None:
@@ -486,18 +542,24 @@ def dashboard(
         "last_auto_crawl_date": get_setting(db, "last_auto_crawl_date", ""),
         "daily_crawl_time": get_setting(db, "daily_crawl_time", "10:00"),
         "source_window_label": "今日内容" if dashboard_date == current_date else f"{selected_date} 内容",
+        "watchlist_due": watchlist.due_summary(db),
         "source_groups": source_groups,
     }
 
 
 @router.post("/crawl/run")
-def run_crawl(background_tasks: BackgroundTasks) -> dict[str, Any]:
+def run_crawl(background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict[str, Any]:
     if crawl_progress.is_running():
         return {"ok": False, "message": "Crawl is already running", "progress": crawl_progress.snapshot()}
     run_timestamp = _prepare_manual_crawl_progress()
-    background_tasks.add_task(_run_crawl_background, run_timestamp)
+    job = CrawlJob(job_type="manual", status="queued", created_at=db_now())
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    background_tasks.add_task(_run_crawl_background, run_timestamp, job.job_id)
     return {
         "ok": True,
+        "job_id": job.job_id,
         "message": "Crawl started",
         "run_timestamp": run_timestamp.isoformat(timespec="seconds"),
         "progress": crawl_progress.snapshot(),
@@ -507,6 +569,35 @@ def run_crawl(background_tasks: BackgroundTasks) -> dict[str, Any]:
 @router.get("/crawl/status")
 def crawl_status() -> dict[str, Any]:
     return crawl_progress.snapshot()
+
+
+def _crawl_job_payload(job: CrawlJob) -> dict[str, Any]:
+    return {
+        "job_id": job.job_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "started_at": _dt(job.started_at),
+        "finished_at": _dt(job.finished_at),
+        "total_sources": job.total_sources,
+        "succeeded_sources": job.succeeded_sources,
+        "failed_sources": job.failed_sources,
+        "message": job.message,
+        "created_at": _dt(job.created_at),
+    }
+
+
+@router.get("/crawl/jobs")
+def list_crawl_jobs(limit: int = Query(default=30, ge=1, le=100), db: Session = Depends(get_db)) -> dict[str, Any]:
+    jobs = db.scalars(select(CrawlJob).order_by(CrawlJob.created_at.desc()).limit(limit)).all()
+    return {"jobs": [_crawl_job_payload(job) for job in jobs]}
+
+
+@router.get("/crawl/jobs/{job_id}")
+def get_crawl_job(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    job = db.get(CrawlJob, job_id)
+    if not job:
+        raise HTTPException(404, "Crawl job not found")
+    return {"job": _crawl_job_payload(job), "progress": crawl_progress.snapshot() if job.status in {"queued", "running"} else None}
 
 
 @router.get("/crawl/week-status")
@@ -797,6 +888,295 @@ def list_content(
         "sources": [_source_payload(source) for source in sources],
         "filters": {"q": q, "source_id": source_id, "status": status, "favorite": favorite},
     }
+
+
+@router.get("/intelligence")
+def list_intelligence(
+    q: str = Query(default=""),
+    status: str = Query(default=""),
+    min_score: int | None = Query(default=None, ge=0, le=100),
+    selected_date: str | None = Query(default=None, alias="date"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    target_date = _parse_query_date(selected_date)
+    return intelligence_inbox.list(
+        db,
+        query=q,
+        status=status,
+        minimum_score=min_score,
+        target_date=target_date,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post("/intelligence/{content_id}/review")
+def review_intelligence(
+    content_id: int,
+    data: IntelligenceReviewRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        return {"ok": True, "item": intelligence_inbox.review(db, content_id, data.decision, data.note)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/intelligence/{content_id}/reprocess")
+def reprocess_intelligence(content_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "item": intelligence_inbox.reprocess(db, content_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/financing-events/build")
+def build_financing_events(
+    data: BuildEventRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        return financing_event_catalog.build_candidates(db, data or BuildEventRequest())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/financing-events")
+def list_financing_events(
+    status: str = Query(default=""),
+    company: str = Query(default=""),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    min_confidence: float | None = Query(default=None, ge=0, le=1),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        query = EventQuery(
+            status=status,
+            company=company,
+            start_date=start_date,
+            end_date=end_date,
+            min_confidence=min_confidence,
+            limit=limit,
+            offset=offset,
+        )
+        return financing_event_catalog.list(db, query)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/financing-events/{event_id}")
+def get_financing_event(event_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"event": financing_event_catalog.get(db, event_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.patch("/financing-events/{event_id}")
+def revise_financing_event(
+    event_id: int,
+    data: ReviseEventCommand,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        return {"ok": True, "event": financing_event_catalog.revise(db, event_id, data)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except EventConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/financing-events/reorganize")
+def reorganize_financing_events(
+    data: ReorganizeEventCommand,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        return financing_event_catalog.reorganize(db, data)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/watch-items/due-summary")
+def watch_items_due_summary(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return watchlist.due_summary(db)
+
+
+@router.get("/watch-items")
+def list_watch_items(
+    status: str = Query(default=""),
+    priority: str = Query(default=""),
+    target_type: str = Query(default=""),
+    due_before: date | None = Query(default=None),
+    sort: str = Query(default="next_review_date"),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        query = WatchQuery(
+            status=status,
+            priority=priority,
+            target_type=target_type,
+            due_before=due_before,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+        return watchlist.list(db, query)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/watch-items")
+def save_watch_item(data: SaveWatchCommand, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "item": watchlist.save(db, data)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except WatchConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.patch("/watch-items/{watch_id}")
+def update_watch_item(watch_id: int, data: UpdateWatchCommand, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "item": watchlist.update(db, watch_id, data)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except WatchConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.delete("/watch-items/{watch_id}")
+def remove_watch_item(watch_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return watchlist.remove(db, watch_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/reports/preview")
+def preview_report(data: ReportPreviewRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return report_workspace.preview(db, data)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/reports")
+def generate_report(data: GenerateReportCommand, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "report": report_workspace.generate(db, data)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.get("/reports")
+def list_reports(
+    status: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return report_workspace.list(db, status=status, limit=limit, offset=offset)
+
+
+@router.get("/reports/{report_id}")
+def get_report(report_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"report": report_workspace.get(db, report_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/reports/{report_id}/generate")
+def regenerate_report(report_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "report": report_workspace.regenerate(db, report_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/reports/{report_id}/versions")
+def revise_report(report_id: int, data: ReviseReportCommand, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "report": report_workspace.revise(db, report_id, data)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/reports/{report_id}/versions/{version_number}")
+def get_report_version(report_id: int, version_number: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    version = db.scalar(
+        select(ReportVersion).where(
+            ReportVersion.report_id == report_id,
+            ReportVersion.version_number == version_number,
+        )
+    )
+    if not version:
+        raise HTTPException(404, "Report version not found")
+    return {
+        "report_id": report_id,
+        "version": {
+            "report_version_id": version.report_version_id,
+            "version_number": version.version_number,
+            "version_source": version.version_source,
+            "template_version": version.template_version,
+            "prompt_id": version.prompt_id,
+            "model_name": version.model_name,
+            "input_snapshot": json_loads(version.input_snapshot_json, []),
+            "markdown_text": version.markdown_text,
+            "generation_status": version.generation_status,
+            "generation_error": version.generation_error,
+            "created_at": _dt(version.created_at),
+        },
+    }
+
+
+@router.patch("/reports/{report_id}/status")
+def set_report_status(report_id: int, data: ReportStatusCommand, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "report": report_workspace.set_status(db, report_id, data)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/reports/{report_id}/export")
+def export_report(report_id: int, data: ExportReportCommand, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        return report_workspace.export(db, report_id, data)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @router.get("/content/{content_id}")

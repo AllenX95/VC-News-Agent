@@ -440,6 +440,7 @@ class CrawlProgress:
             "current_source": "",
             "completed_sources": 0,
             "total_sources": 0,
+            "failed_sources": 0,
             "new_items": 0,
             "failed_items": 0,
             "started_at": "",
@@ -457,6 +458,7 @@ class CrawlProgress:
                     "current_source": "",
                     "completed_sources": 0,
                     "total_sources": total_sources,
+                    "failed_sources": 0,
                     "new_items": 0,
                     "failed_items": 0,
                     "started_at": started_at.isoformat(timespec="seconds"),
@@ -474,6 +476,8 @@ class CrawlProgress:
             self._state["completed_sources"] += 1
             self._state["new_items"] += new_items
             self._state["failed_items"] += failed_items
+            if not ok:
+                self._state["failed_sources"] += 1
             self._state["current_source"] = source_name
             self._state["message"] = f"{source_name} 完成，新增 {new_items} 条" if ok else f"{source_name} 抓取失败"
 

@@ -45,9 +45,12 @@
             <el-tag :type="row.llm_status === 'success' ? 'success' : 'warning'">{{ row.llm_status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="220">
           <template #default="{ row }">
-            <el-button size="small" @click="favorite(row)">{{ row.is_favorite ? "取消收藏" : "收藏" }}</el-button>
+            <div class="toolbar compact-toolbar">
+              <el-button size="small" @click="favorite(row)">{{ row.is_favorite ? "取消收藏" : "收藏" }}</el-button>
+              <el-button size="small" type="primary" plain @click="watch(row)">关注</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -58,6 +61,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
+import { ElMessage } from "element-plus";
 import { api, notifyError } from "../api/client";
 
 const loading = ref(false);
@@ -92,8 +96,27 @@ async function favorite(row: any) {
   }
 }
 
+async function watch(row: any) {
+  try {
+    await api.post("/watch-items", {
+      target_type: "content",
+      target_id: row.content_id,
+      status: "watching",
+      priority: "medium",
+      reason: "来自内容库",
+    });
+    ElMessage.success("已加入关注列表");
+  } catch (error) {
+    notifyError(error);
+  }
+}
+
 onMounted(load);
 </script>
+
+<style scoped>
+.compact-toolbar { gap: 4px; }
+</style>
 
 <style scoped>
 .tag-gap {
