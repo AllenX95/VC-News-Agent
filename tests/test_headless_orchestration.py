@@ -97,8 +97,15 @@ class HeadlessOrchestrationTests(unittest.TestCase):
             payload = json.loads(result.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "success")
             self.assertEqual(payload["stages"]["html_render"], "success")
-            self.assertTrue((Path(directory) / "runs" / "2026-08-17" / "latest.json").exists())
+            self.assertTrue((Path(directory) / "runs" / "artifacts" / "20260817-latest.json").exists())
             self.assertTrue(Path(result.artifacts["html"]).exists())
+            self.assertEqual(Path(result.artifacts["html"]).name, "20260817-daily-report.html")
+            self.assertEqual(result.manifest_path.parent, Path(directory) / "runs" / "artifacts")
+            self.assertTrue(result.manifest_path.name.startswith(f"20260817-{result.run_id}-"))
+            self.assertEqual(Path(result.artifacts["html"]).parent, Path(directory) / "runs" / "report")
+            self.assertEqual(Path(result.artifacts["report_data"]).parent, Path(directory) / "runs" / "artifacts")
+            self.assertEqual(Path(result.artifacts["markdown"]).parent, Path(directory) / "runs" / "artifacts")
+            self.assertEqual(Path(result.artifacts["log"]).parent, Path(directory) / "runs" / "artifacts")
             self.assertTrue(Path(result.artifacts["markdown"]).read_text(encoding="utf-8").startswith("# Daily"))
 
     def test_successful_date_is_idempotently_skipped(self):
@@ -142,7 +149,7 @@ class HeadlessOrchestrationTests(unittest.TestCase):
             self.assertEqual(result.exit_code, EXIT_PARTIAL)
             self.assertTrue(result.warnings)
             latest = json.loads(
-                (Path(directory) / "runs" / "2026-08-17" / "latest.json").read_text(encoding="utf-8")
+                (Path(directory) / "runs" / "artifacts" / "20260817-latest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(latest["status"], "partial")
             self.assertTrue(Path(result.artifacts["html"]).exists())
@@ -166,7 +173,7 @@ class HeadlessOrchestrationTests(unittest.TestCase):
 
             self.assertEqual(result.status, "lock_conflict")
             self.assertEqual(result.exit_code, EXIT_LOCK)
-            self.assertFalse((runtime / "2026-08-17" / "latest.json").exists())
+            self.assertFalse((runtime / "artifacts" / "20260817-latest.json").exists())
             self.assertEqual(
                 json.loads((runtime / ".daily-run.lock").read_text(encoding="utf-8"))["run_id"], "other"
             )
@@ -179,7 +186,7 @@ class HeadlessOrchestrationTests(unittest.TestCase):
             self.assertEqual(result.status, "report_data_invalid")
             self.assertEqual(result.exit_code, EXIT_SCHEMA)
             self.assertNotIn("html", result.artifacts)
-            self.assertFalse(list((Path(directory) / "runs" / "2026-08-17" / result.run_id).glob("daily.html")))
+            self.assertFalse((Path(directory) / "runs" / "report" / "20260817-daily-report.html").exists())
 
     def test_render_failure_keeps_report_data_but_not_html(self):
         def fail_render(_data, _path):

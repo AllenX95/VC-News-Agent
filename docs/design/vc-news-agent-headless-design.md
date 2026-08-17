@@ -27,7 +27,7 @@ Headless CLI 和后续 GUI/API 都是这个 seam 上的 adapter，不自行编�
 - 调用日报数据模块和 HTML 渲染模块；
 - 保留 Markdown 兼容产物；
 - 从运行开始持续写 manifest；
-- 写独立 run ID 目录并原子更新 latest；
+- 将日期与 run ID 编入文件名，并在扁平 runtime 目录中原子更新 latest；
 - 将内部异常映射为稳定状态和退出码。
 
 不负责：
@@ -112,18 +112,19 @@ Headless 不读取该模式决定是否运行，也永远不启动 APScheduler�
 ## 5. 文件与原子性
 
 ```text
-runs/<target-date>/
-  latest.json
-  <run-id>/
-    run_manifest.json
-    report_data.json
-    daily.html
-    daily.md
-    run.log
+runs/
+  report/
+    <YYYYMMDD>-daily-report.html
+  artifacts/
+    <YYYYMMDD>-latest.json
+    <YYYYMMDD>-<run-id>-run-manifest.json
+    <YYYYMMDD>-<run-id>-report-data.json
+    <YYYYMMDD>-<run-id>-daily-report.md
+    <YYYYMMDD>-<run-id>-run.log
 ```
 
-- 所有 JSON 和 HTML 先写同目录临时文件，再原子替换目标。
-- `force` 永远创建新 run ID，不覆盖旧产物。
+- 所有 JSON 和 HTML 先写各自目标目录的临时文件，再原子替换目标。
+- `force` 创建新 run ID；结构化产物按 run ID 保留，当日规范 HTML 原子更新。
 - stdout 最后一行只输出一条机器可读 JSON，用于定位本次 manifest。
 - 无法创建 runtime 目录时，stderr 输出最小 JSON 错误。
 

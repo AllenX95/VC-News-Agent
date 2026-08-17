@@ -24,7 +24,7 @@
 - 自动执行 Git commit、push 或创建 PR。
 - 在应用失败后自行生成替代新闻。
 - 编造 source、URL、content ID、event ID、融资信息或新闻事实。
-- 覆盖原始 run 目录中的结构化产物。
+- 覆盖 runtime 根目录中的原始结构化产物。
 
 所有新闻抓取、清洗、去重、分类、LLM enrichment 和 HTML 渲染均由 VC News Agent 完成。
 
@@ -169,9 +169,9 @@ $env:VC_NEWS_SCHEDULER_MODE = "external"
 
 只有 stdout 没有提供合法路径时，才允许读取当天的：
 
-`data\runs\<北京时间日期>\latest.json`
+`data\runs\artifacts\<YYYYMMDD>-latest.json`
 
-不得扫描多个运行目录并猜测哪个文件最新。
+不得扫描多个文件并猜测哪个产物最新。
 
 解析路径后必须确认：
 
@@ -181,6 +181,14 @@ $env:VC_NEWS_SCHEDULER_MODE = "external"
 - manifest 的 `target_date` 是北京时间当天。
 - manifest 中的 `run_id` 与 stdout 一致。
 - manifest 中声明的 report_data、HTML 和日志路径均位于允许的 runtime 根目录内。
+- 用户交付 HTML 必须直接位于 `D:\claude-projects\VC-news-agent-AI\data\runs\report`，不得位于日期或 run-id 子目录中。
+- HTML 文件名严格为 `<YYYYMMDD>-daily-report.html`。
+- manifest、report data、Markdown、日志和 latest 指针必须直接位于 `D:\claude-projects\VC-news-agent-AI\data\runs\artifacts`，不得位于日期或 run-id 子目录中。
+- manifest 文件名严格为 `<YYYYMMDD>-<run-id>-run-manifest.json`。
+- report data 文件名严格为 `<YYYYMMDD>-<run-id>-report-data.json`。
+- Markdown 文件名严格为 `<YYYYMMDD>-<run-id>-daily-report.md`。
+- 日志文件名严格为 `<YYYYMMDD>-<run-id>-run.log`。
+- 文件名中的日期必须与 `target_date` 一致且不包含连字符。
 
 任何路径越界均视为验收失败。
 
@@ -348,7 +356,7 @@ $env:VC_NEWS_SCHEDULER_MODE = "external"
 - 警告：
 ```
 
-然后提供可点击的 HTML 文件链接。
+然后提供 `data\runs\report\<YYYYMMDD>-daily-report.html` 的可点击文件链接。不得把 artifacts 文件作为主要交付物。
 
 失败时：
 

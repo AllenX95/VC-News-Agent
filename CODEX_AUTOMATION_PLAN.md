@@ -34,7 +34,7 @@
                  Jinja2 HTML 模板（版本化）
                               │
                               ▼
-                       daily.html
+              <YYYYMMDD>-daily-report.html
                               ▲
                               │
                     Codex Automation
@@ -126,7 +126,7 @@ CrawlService.run_all_sources()
   ↓
 校验 report_data.json
   ↓
-Jinja2 渲染 daily.html
+Jinja2 渲染 <YYYYMMDD>-daily-report.html
   ↓
 写 run_manifest.json，释放锁，返回退出码
   ↓
@@ -290,17 +290,17 @@ generate_daily_investment_report
 
 ```text
 runs/
-  2026-08-17/
-    latest.json
-    20260817T100000+0800-4f82c9/
-      run_manifest.json
-      report_data.json
-      daily.html
-      daily.md
-      run.log
+  report/
+    20260817-daily-report.html
+  artifacts/
+    20260817-latest.json
+    20260817-20260817T100000+0800-4f82c9-run-manifest.json
+    20260817-20260817T100000+0800-4f82c9-report-data.json
+    20260817-20260817T100000+0800-4f82c9-daily-report.md
+    20260817-20260817T100000+0800-4f82c9-run.log
 ```
 
-每次运行使用独立的 `run_id` 目录，`--force` 不覆盖历史产物。任务完成后原子更新 `latest.json`，其中只保存当前 run_id 和 manifest 路径。Headless 同时在 stdout 最后一行输出一条 JSON，包含 `run_id`、`status` 和 manifest 的绝对路径，Codex 优先使用这条输出定位本次运行，`latest.json` 只作为恢复手段。
+用户交付 HTML 统一位于 `runs/report/`；manifest、report data、Markdown、日志和 latest 指针位于 `runs/artifacts/`。两个目录内部均不再创建日期或 run ID 子目录，而是将日期和 `run_id` 编入文件名。`--force` 保留新的 run-specific 结构化产物，并原子更新当日规范 HTML。Headless 同时在 stdout 最后一行输出一条 JSON，包含 `run_id`、`status` 和 manifest 的绝对路径，Codex 优先使用这条输出定位本次运行，latest 指针只作为恢复手段。
 
 Markdown 作为兼容和排障产物保留，但 HTML 是主交付物。
 
@@ -314,7 +314,7 @@ Markdown 作为兼容和排障产物保留，但 HTML 是主交付物。
 
 ## 9. 运行 manifest、状态和退出码
 
-每次运行必须写 `run_manifest.json`，即使失败也尽量留下记录。
+每次运行必须写 `<YYYYMMDD>-<run-id>-run-manifest.json`，即使失败也尽量留下记录。
 
 建议字段：
 
@@ -341,10 +341,10 @@ Markdown 作为兼容和排障产物保留，但 HTML 是主交付物。
     "items_in_report": 24
   },
   "artifacts": {
-    "html": "runs/2026-08-17/daily.html",
-    "report_data": "runs/2026-08-17/report_data.json",
-    "markdown": "runs/2026-08-17/daily.md",
-    "log": "runs/2026-08-17/run.log"
+    "html": "runs/report/20260817-daily-report.html",
+    "report_data": "runs/artifacts/20260817-20260817T100000+0800-4f82c9-report-data.json",
+    "markdown": "runs/artifacts/20260817-20260817T100000+0800-4f82c9-daily-report.md",
+    "log": "runs/artifacts/20260817-20260817T100000+0800-4f82c9-run.log"
   },
   "warnings": ["3 个信息源抓取失败"],
   "error": null
@@ -364,7 +364,7 @@ Markdown 作为兼容和排障产物保留，但 HTML 是主交付物。
 | 40 | HTML 渲染失败 | 可交付 JSON/Markdown 作为降级产物 |
 | 50 | 已有运行占锁 | 报告跳过，不启动第二份任务 |
 
-manifest 状态除 `success`、`partial`、`failed` 外，增加 `skipped_already_success` 和 `lock_conflict`。preflight 开始前先创建最小 run 目录和初始 manifest；若 runtime 目录本身不可写，无法落盘时则向 stderr 输出单行 JSON 错误对象，字段至少包含 `status`、`exit_code`、`stage` 和 `error`。锁冲突不得改写正在运行任务的 `latest.json`。
+manifest 状态除 `success`、`partial`、`failed` 外，增加 `skipped_already_success` 和 `lock_conflict`。preflight 开始前先在 runtime 根目录创建带日期和 run ID 的初始 manifest；若 runtime 目录本身不可写，无法落盘时则向 stderr 输出单行 JSON 错误对象，字段至少包含 `status`、`exit_code`、`stage` 和 `error`。锁冲突不得改写正在运行任务的 latest 指针。
 
 ## 10. 调度迁移方案
 
@@ -407,7 +407,7 @@ Codex Automation 连续稳定运行 2 周后，将默认模式改为 `external`�
 - 人工明确使用 `--force`：重新执行并创建新的 run_id；
 - HTML 采用临时文件渲染完成后原子替换，避免留下半页文件。
 
-默认跳过时返回退出码 1，stdout 指向已有成功运行的 manifest，不创建新的日报版本。`--force` 创建全新的 run_id 和产物目录。
+默认跳过时返回退出码 1，stdout 指向已有成功运行的 manifest，不创建新的日报版本。`--force` 创建全新的 run_id 和扁平命名产物，并更新当日规范 HTML。
 
 ### 11.3 数据库写入
 
@@ -533,7 +533,7 @@ GUI 与 Headless 的执行入口必须最终调用同一个 orchestration/servic
 - 完成 `daily-v1.html.j2`、离线样式和降级版输出。
 - 在 Reports/Dashboard 中增加 HTML 入口。
 
-交付：稳定的 `report_data.json + daily.html + daily.md`。
+交付：稳定的 `<YYYYMMDD>-<run-id>-report-data.json + <YYYYMMDD>-daily-report.html + <YYYYMMDD>-<run-id>-daily-report.md`。
 
 ### Phase 3：Codex Automation 上线（0.5–1 天）
 

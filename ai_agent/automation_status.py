@@ -1,7 +1,7 @@
 """Read-only status and report discovery for automated daily runs.
 
-The headless runner writes a date directory containing a convenience
-``latest.json`` pointer and one or more run directories.  This module is the
+The headless runner writes user-facing HTML under ``report/`` and supporting
+date-prefixed artifacts under ``artifacts/``.  This module is the
 small read-side seam used by the HTTP API and the desktop UI.  It intentionally
 does not create directories, repair pointers, or mutate lock files.
 
@@ -59,14 +59,13 @@ class AutomationStatusReader:
             return self._base_status(str(target_date or ""), status="invalid", error=date_error)
 
         assert normalized_date is not None
-        date_root = self._safe_join(self.runtime_root, normalized_date)
-        if date_root is None:
-            return self._base_status(normalized_date, status="invalid", error="target date is outside runtime root")
+        date_token = normalized_date.replace("-", "")
+        artifacts_root = self.runtime_root / "artifacts"
 
         lock = self._read_lock()
         pointer_payload: dict[str, Any] | None = None
         pointer_error: str | None = None
-        latest_path = date_root / "latest.json"
+        latest_path = artifacts_root / f"{date_token}-latest.json"
         if latest_path.exists():
             pointer_payload, pointer_error = self._read_json_object(latest_path, "latest pointer")
 
@@ -75,7 +74,9 @@ class AutomationStatusReader:
         manifest_error: str | None = None
 
         if pointer_payload is not None:
-            manifest_path, manifest_error = self._manifest_from_pointer(pointer_payload, date_root, normalized_date)
+            manifest_path, manifest_error = self._manifest_from_pointer(
+                pointer_payload, artifacts_root, normalized_date
+            )
             if manifest_path is not None:
                 manifest_payload, manifest_error = self._read_json_object(manifest_path, "run manifest")
 
@@ -83,7 +84,7 @@ class AutomationStatusReader:
         # the orchestrator's defensive fallback while applying stricter path
         # checks to every candidate.
         if manifest_payload is None:
-            fallback = self._find_manifest_candidates(date_root, normalized_date)
+            fallback = self._find_manifest_candidates(artifacts_root, normalized_date)
             for candidate in fallback:
                 payload, candidate_error = self._read_json_object(candidate, "run manifest")
                 if payload is None:
@@ -152,25 +153,28 @@ class AutomationStatusReader:
         normalized_date, date_error = self._normalize_date(target_date)
         if date_error or normalized_date is None:
             raise ValueError(date_error or "invalid target date")
-        date_root = self._safe_join(self.runtime_root, normalized_date)
-        if date_root is None:
-            raise PermissionError("target date is outside runtime root")
+        date_token = normalized_date.replace("-", "")
+        artifacts_root = self.runtime_root / "artifacts"
 
         # Resolve the same manifest selected by get_status, but do not expose
         # internal paths in the API payload.
-        pointer_payload, pointer_error = self._read_json_object(date_root / "latest.json", "latest pointer")
+        pointer_payload, pointer_error = self._read_json_object(
+            artifacts_root / f"{date_token}-latest.json", "latest pointer"
+        )
         manifest_path: Path | None = None
         manifest_payload: dict[str, Any] | None = None
         traversal_detected = False
         if pointer_payload is not None:
-            manifest_path, manifest_error = self._manifest_from_pointer(pointer_payload, date_root, normalized_date)
+            manifest_path, manifest_error = self._manifest_from_pointer(
+                pointer_payload, artifacts_root, normalized_date
+            )
             if manifest_error and "runtime root" in manifest_error:
                 traversal_detected = True
             if manifest_path is not None:
                 manifest_payload, _ = self._read_json_object(manifest_path, "run manifest")
 
         if manifest_payload is None:
-            for candidate in self._find_manifest_candidates(date_root, normalized_date):
+            for candidate in self._find_manifest_candidates(artifacts_root, normalized_date):
                 payload, _ = self._read_json_object(candidate, "run manifest")
                 if payload is not None:
                     manifest_path, manifest_payload = candidate, payload
@@ -269,25 +273,26 @@ class AutomationStatusReader:
         return payload, None
 
     def _manifest_from_pointer(
-        self, payload: dict[str, Any], date_root: Path, target_date: str
+        self, payload: dict[str, Any], runtime_root: Path, target_date: str
     ) -> tuple[Path | None, str | None]:
         if str(payload.get("target_date") or target_date) != target_date:
             return None, "latest pointer target_date does not match request"
         raw = payload.get("manifest_path") or payload.get("manifest")
         if not raw:
             return None, "latest pointer has no manifest_path"
-        path = self._safe_path_from_value(raw, date_root)
+        path = self._safe_path_from_value(raw, runtime_root)
         if path is None:
             return None, "manifest path is outside runtime root"
         return path, None
 
-    def _find_manifest_candidates(self, date_root: Path, target_date: str) -> list[Path]:
-        if not date_root.is_dir():
+    def _find_manifest_candidates(self, runtime_root: Path, target_date: str) -> list[Path]:
+        if not runtime_root.is_dir():
             return []
         candidates: list[Path] = []
         try:
-            for path in date_root.glob("*/run_manifest.json"):
-                safe = self._safe_path_from_value(path, date_root)
+            date_token = target_date.replace("-", "")
+            for path in runtime_root.glob(f"{date_token}-*-run-manifest.json"):
+                safe = self._safe_path_from_value(path, runtime_root)
                 if safe is None or not safe.is_file():
                     continue
                 candidates.append(safe)
@@ -305,7 +310,7 @@ class AutomationStatusReader:
         latest: dict[str, Any] = {
             "status": status,
             "target_date": str(payload.get("target_date") or target_date),
-            "run_id": str(payload.get("run_id") or (manifest_path.parent.name if manifest_path else "")) or None,
+            "run_id": str(payload.get("run_id") or "") or None,
             "started_at": payload.get("started_at"),
             "finished_at": payload.get("finished_at"),
             "stages": payload.get("stages") if isinstance(payload.get("stages"), dict) else {},

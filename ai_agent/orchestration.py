@@ -236,9 +236,12 @@ class DailyRunOrchestrator:
             )
 
         root = Path(options.output_root).expanduser() if options.output_root else self.runtime_root
-        date_root = root / target_date
+        artifacts_root = root / "artifacts"
+        report_root = root / "report"
         try:
-            date_root.mkdir(parents=True, exist_ok=True)
+            root.mkdir(parents=True, exist_ok=True)
+            artifacts_root.mkdir(parents=True, exist_ok=True)
+            report_root.mkdir(parents=True, exist_ok=True)
         except Exception as exc:  # noqa: BLE001
             return self._unpersisted_result(
                 status="preflight_failed",
@@ -248,25 +251,15 @@ class DailyRunOrchestrator:
             )
 
         if not options.force:
-            previous = self._find_successful_manifest(date_root)
+            previous = self._find_successful_manifest(artifacts_root, target_date)
             if previous is not None:
                 return self._result_from_manifest(previous, skipped=True)
 
         run_id = self._new_run_id()
-        run_dir = date_root / run_id
-        try:
-            run_dir.mkdir(parents=True, exist_ok=False)
-        except Exception as exc:  # noqa: BLE001
-            return self._unpersisted_result(
-                run_id=run_id,
-                status="preflight_failed",
-                exit_code=EXIT_PREFLIGHT,
-                target_date=target_date,
-                error=_safe_error(exc),
-            )
-
-        manifest_path = run_dir / "run_manifest.json"
-        log_path = run_dir / "run.log"
+        date_token = target_date.replace("-", "")
+        file_prefix = f"{date_token}-{run_id}"
+        manifest_path = artifacts_root / f"{file_prefix}-run-manifest.json"
+        log_path = artifacts_root / f"{file_prefix}-run.log"
         started_at = self._timestamp()
         manifest: dict[str, Any] = {
             "schema_version": MANIFEST_VERSION,
@@ -450,7 +443,7 @@ class DailyRunOrchestrator:
                     stats = report_data.get("stats")
                     if isinstance(stats, dict):
                         counts.update({str(k): int(v) for k, v in stats.items() if isinstance(v, (int, float))})
-                report_data_path = run_dir / "report_data.json"
+                report_data_path = artifacts_root / f"{file_prefix}-report-data.json"
                 try:
                     _atomic_write_json(report_data_path, report_data)
                 except Exception as exc:  # noqa: BLE001
@@ -461,7 +454,7 @@ class DailyRunOrchestrator:
                 manifest["stages"]["markdown"] = "running"
                 try:
                     markdown = self._render_daily_markdown(db, target_date)
-                    markdown_path = run_dir / "daily.md"
+                    markdown_path = artifacts_root / f"{file_prefix}-daily-report.md"
                     _atomic_write_text(markdown_path, markdown)
                     artifacts["markdown"] = str(markdown_path)
                     manifest["stages"]["markdown"] = "success"
@@ -471,7 +464,7 @@ class DailyRunOrchestrator:
 
                 manifest["stages"]["html_render"] = "running"
                 self._write_manifest_safely(manifest_path, manifest)
-                html_path = run_dir / "daily.html"
+                html_path = report_root / f"{date_token}-daily-report.html"
                 try:
                     rendered = self._render_daily_report(report_data, html_path)
                     html_path = Path(rendered) if rendered else html_path
@@ -504,7 +497,7 @@ class DailyRunOrchestrator:
         self._write_manifest_safely(manifest_path, manifest)
         self._log(log_path, f"run finished status={status} exit_code={exit_code}")
         if status in {"success", "partial"}:
-            self._atomic_update_latest(root, target_date, run_id, status, manifest_path)
+            self._atomic_update_latest(artifacts_root, target_date, run_id, status, manifest_path)
 
         return RunResult(
             run_id=run_id,
@@ -641,19 +634,26 @@ class DailyRunOrchestrator:
 
     # ---- persistence helpers ---------------------------------------------
 
-    def _find_successful_manifest(self, date_root: Path) -> Path | None:
-        latest = date_root / "latest.json"
+    def _find_successful_manifest(self, artifacts_root: Path, target_date: str) -> Path | None:
+        date_token = target_date.replace("-", "")
+        latest = artifacts_root / f"{date_token}-latest.json"
         candidates: list[Path] = []
         if latest.exists():
             try:
                 payload = json.loads(latest.read_text(encoding="utf-8"))
                 manifest = Path(str(payload.get("manifest_path") or ""))
                 if not manifest.is_absolute():
-                    manifest = date_root / manifest
+                    manifest = artifacts_root / manifest
                 candidates.append(manifest)
             except (OSError, ValueError, TypeError):
                 pass
-        candidates.extend(sorted(date_root.glob("*/run_manifest.json"), key=lambda path: path.stat().st_mtime, reverse=True))
+        candidates.extend(
+            sorted(
+                artifacts_root.glob(f"{date_token}-*-run-manifest.json"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        )
         seen: set[Path] = set()
         for manifest in candidates:
             manifest = manifest.resolve()
@@ -673,10 +673,10 @@ class DailyRunOrchestrator:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError) as exc:
             return RunResult(
-                run_id=path.parent.name,
+                run_id="",
                 status="preflight_failed",
                 exit_code=EXIT_PREFLIGHT,
-                target_date=path.parent.parent.name,
+                target_date="",
                 manifest_path=path,
                 error=_safe_error(exc),
             )
@@ -686,10 +686,10 @@ class DailyRunOrchestrator:
             if value is not None
         }
         return RunResult(
-            run_id=str(payload.get("run_id") or path.parent.name),
+            run_id=str(payload.get("run_id") or ""),
             status="skipped_already_success" if skipped else str(payload.get("status") or "success"),
             exit_code=EXIT_SKIPPED if skipped else _exit_code_for_status(str(payload.get("status") or "success")),
-            target_date=str(payload.get("target_date") or path.parent.parent.name),
+            target_date=str(payload.get("target_date") or ""),
             manifest_path=path,
             artifacts=artifacts,
             warnings=[str(item) for item in (payload.get("warnings") or [])],
@@ -698,8 +698,10 @@ class DailyRunOrchestrator:
             counts={str(k): int(v) for k, v in (payload.get("counts") or {}).items() if isinstance(v, (int, float))},
         )
 
-    def _atomic_update_latest(self, root: Path, target_date: str, run_id: str, status: str, manifest_path: Path) -> None:
-        latest = root / target_date / "latest.json"
+    def _atomic_update_latest(
+        self, artifacts_root: Path, target_date: str, run_id: str, status: str, manifest_path: Path
+    ) -> None:
+        latest = artifacts_root / f"{target_date.replace('-', '')}-latest.json"
         payload = {
             "schema_version": MANIFEST_VERSION,
             "target_date": target_date,
