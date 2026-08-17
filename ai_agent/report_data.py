@@ -8,7 +8,7 @@ which can later be enriched by an LLM adapter without changing the renderer.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 import json
 import re
 from typing import Any
@@ -18,6 +18,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import TZ
+from .daily_window import daily_window_for_date, in_daily_window_with_precision
 from .models import ContentItem, EventContent, FinancingEvent
 
 
@@ -162,6 +163,8 @@ def _time_choice(item: ContentItem) -> tuple[datetime | None, str]:
     status = _clean_text(getattr(item, "publish_time_status", "")) or "missing"
     publish_time = _as_shanghai(item.publish_time)
     crawl_time = _as_shanghai(item.crawl_time)
+    if publish_time is not None and status.lower() == "date_only":
+        return publish_time, "published_date_only"
     if publish_time is not None and status.lower() in _EXACT_TIME_STATUSES:
         return publish_time, "published_exact"
     if publish_time is not None and status.lower() not in {"missing", "estimated"} and crawl_time is None:
@@ -174,10 +177,6 @@ def _time_choice(item: ContentItem) -> tuple[datetime | None, str]:
         # its persisted timestamp than silently disappearing.
         return publish_time, "published_unverified"
     return None, "missing"
-
-
-def _in_day(value: datetime | None, day: date) -> bool:
-    return value is not None and value.date() == day
 
 
 def _iso_datetime(value: datetime | None) -> str | None:
@@ -243,9 +242,7 @@ def _theme_for(item: ContentItem, category: str) -> str:
     return "其他技术" if category == "technology" else "其他产业"
 
 
-def _content_query(db: Session, day: date) -> list[ContentItem]:
-    start = datetime.combine(day, time.min)
-    end = datetime.combine(day + timedelta(days=1), time.min)
+def _content_query(db: Session, start: datetime, end: datetime) -> list[ContentItem]:
     # The SQL predicate is only an efficient coarse filter.  The final date
     # decision is made in Python after applying publish-time quality rules.
     statement = (
@@ -253,7 +250,11 @@ def _content_query(db: Session, day: date) -> list[ContentItem]:
         .options(selectinload(ContentItem.tags))
         .where(
             or_(
-                and_(ContentItem.publish_time.is_not(None), ContentItem.publish_time >= start, ContentItem.publish_time < end),
+                and_(
+                    ContentItem.publish_time.is_not(None),
+                    ContentItem.publish_time >= datetime.combine(start.date(), time.min),
+                    ContentItem.publish_time < end,
+                ),
                 and_(ContentItem.crawl_time.is_not(None), ContentItem.crawl_time >= start, ContentItem.crawl_time < end),
             )
         )
@@ -262,11 +263,15 @@ def _content_query(db: Session, day: date) -> list[ContentItem]:
     return list(db.scalars(statement).all())
 
 
-def _event_query(db: Session, day: date) -> list[FinancingEvent]:
+def _event_query(db: Session, start: datetime, end: datetime) -> list[FinancingEvent]:
     statement = (
         select(FinancingEvent)
         .options(selectinload(FinancingEvent.contents).selectinload(EventContent.content))
-        .where(FinancingEvent.announced_date == day, FinancingEvent.review_status != "excluded")
+        .where(
+            FinancingEvent.announced_date >= start.date(),
+            FinancingEvent.announced_date <= end.date(),
+            FinancingEvent.review_status != "excluded",
+        )
         .order_by(FinancingEvent.event_id.asc())
     )
     return list(db.scalars(statement).unique().all())
@@ -390,17 +395,35 @@ def build_daily_report_data(
     *,
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build a traceable, deterministic report for one Beijing calendar day."""
+    """Build a traceable report for the Beijing 10:00-to-10:00 daily window."""
 
     day = _target_day(target_date)
+    window_start, window_end = daily_window_for_date(day)
     report_warnings = list(warnings or [])
-    contents = [item for item in _content_query(db, day) if _in_day(_time_choice(item)[0], day)]
-    events = _event_query(db, day)
+    contents = [
+        item
+        for item in _content_query(db, window_start, window_end)
+        if in_daily_window_with_precision(
+            _time_choice(item)[0], item.publish_time_status, window_start, window_end
+        )
+    ]
+    events = _event_query(db, window_start, window_end)
 
     event_items: list[dict[str, Any]] = []
     event_content_ids: set[int] = set()
     event_source_ids: set[int] = set()
     for event in events:
+        if not any(
+            relation.content is not None
+            and in_daily_window_with_precision(
+                _time_choice(relation.content)[0],
+                relation.content.publish_time_status,
+                window_start,
+                window_end,
+            )
+            for relation in (event.contents or [])
+        ):
+            continue
         item, linked_ids, linked_source_ids = _event_item(event, day)
         event_content_ids.update(linked_ids)
         event_source_ids.update(linked_source_ids)
@@ -441,7 +464,8 @@ def build_daily_report_data(
     included_items = len(regular_items) + len(event_items)
     counts = {key: sum(len(group["items"]) for group in section["groups"]) for key, section in ((item["key"], item) for item in sections)}
     summary = (
-        f"{day.isoformat()} 共收录 {included_items} 条情报："
+        f"北京时间 {window_start:%Y-%m-%d %H:%M} 至 {window_end:%Y-%m-%d %H:%M} "
+        f"共收录 {included_items} 条情报："
         f"技术进展 {counts['technology']} 条、产业新闻 {counts['industry']} 条、融资新闻 {counts['funding']} 条。"
     )
     # Keep warning order stable while avoiding duplicate messages from callers
@@ -451,6 +475,8 @@ def build_daily_report_data(
         "schema_version": SCHEMA_VERSION,
         "template_version": TEMPLATE_VERSION,
         "report_date": day.isoformat(),
+        "window_start": window_start.replace(tzinfo=TZ).isoformat(timespec="seconds"),
+        "window_end": window_end.replace(tzinfo=TZ).isoformat(timespec="seconds"),
         "generated_at": datetime.now(TZ).isoformat(timespec="seconds"),
         "headline": "AI VC Daily",
         "executive_summary": summary,

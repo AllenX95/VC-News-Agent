@@ -4,7 +4,9 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ai_agent.automation_status import AutomationStatusReader
 
@@ -71,7 +73,11 @@ class AutomationStatusReaderTests(unittest.TestCase):
     def test_running_lock_is_reported_without_mutating_lock(self) -> None:
         self.runtime.mkdir(parents=True)
         lock = self.runtime / ".daily-run.lock"
-        payload = {"pid": os.getpid(), "run_id": "run-active", "started_at": "2026-08-17T10:00:00+08:00"}
+        payload = {
+            "pid": os.getpid(),
+            "run_id": "run-active",
+            "started_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
+        }
         lock.write_text(json.dumps(payload), encoding="utf-8")
 
         status = self.reader.get_status(self.target_date)

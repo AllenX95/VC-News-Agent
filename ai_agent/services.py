@@ -35,6 +35,7 @@ from .config import (
     normalize_proxy_mode,
 )
 from .database import SessionLocal
+from .daily_window import daily_window_for_run, in_daily_window_with_precision
 from .models import (
     BackupRecord,
     ContentCache,
@@ -82,16 +83,6 @@ ARTICLE_SOURCE_CATEGORIES = {
 INTRINSIC_AI_SOURCE_CATEGORIES = {"ai_media", "official_news", "official_research"}
 SIGNAL_SOURCE_CATEGORIES = {"ai_research_signal", "ai_product_signal", "startup_directory"}
 OLDER_ARTICLE_STOP_STREAK = 10
-OVERSEAS_DATE_LENIENT_HOST_MARKERS = (
-    "a16z.com",
-    "techcrunch.com",
-    "theverge.com",
-    "venturebeat.com",
-    "the-decoder.com",
-    "crunchbase.com",
-    "deepmind.google",
-    "ai.meta.com",
-)
 SUMMARY_CHAR_LIMIT = 180
 SUMMARY_SENTENCE_MIN_CHARS = 80
 FINANCING_REPORT_SETTING_KEY = "weekly_financing_report_dir"
@@ -2272,7 +2263,7 @@ class CrawlService:
                     ),
                 )
 
-            if self._is_item_before_target_day(item, target_timestamp):
+            if self._is_item_before_source_window(item, target_timestamp):
                 if self._is_item_in_source_window(source, item, target_timestamp):
                     older_streak = 0
                     items.append(item)
@@ -2473,7 +2464,7 @@ class CrawlService:
                             item.publish_time = estimated
                             item.publish_time_status = "estimated"
                     if filter_target_day:
-                        if self._is_item_before_target_day(item, target_timestamp):
+                        if self._is_item_before_source_window(item, target_timestamp):
                             if self._is_item_in_source_window(source, item, target_timestamp):
                                 older_streak = 0
                                 items.append(item)
@@ -2498,7 +2489,7 @@ class CrawlService:
                     publish_time_status=list_date_status if list_date else ("estimated" if fallback_date else "missing"),
                 )
                 if filter_target_day:
-                    if self._is_item_before_target_day(fallback_item, target_timestamp):
+                    if self._is_item_before_source_window(fallback_item, target_timestamp):
                         if self._is_item_in_source_window(source, fallback_item, target_timestamp):
                             older_streak = 0
                             items.append(fallback_item)
@@ -2751,7 +2742,7 @@ class CrawlService:
                         int(numeric.group(4) or 0),
                         int(numeric.group(5) or 0),
                     ),
-                    "exact",
+                    "exact" if numeric.group(4) is not None else "date_only",
                 )
             except ValueError:
                 pass
@@ -2768,7 +2759,7 @@ class CrawlService:
                 )
                 if parsed.date() > (now + timedelta(days=1)).date():
                     parsed = parsed.replace(year=parsed.year - 1)
-                return parsed, "estimated"
+                return parsed, "estimated" if short_numeric.group(3) is not None else "date_only"
             except ValueError:
                 pass
 
@@ -2783,7 +2774,7 @@ class CrawlService:
                         int(chinese.group(3) or 0),
                         int(chinese.group(4) or 0),
                     ),
-                    "estimated",
+                    "estimated" if chinese.group(3) is not None else "date_only",
                 )
             except ValueError:
                 pass
@@ -2799,7 +2790,7 @@ class CrawlService:
                         int(chinese_full.group(4) or 0),
                         int(chinese_full.group(5) or 0),
                     ),
-                    "exact",
+                    "exact" if chinese_full.group(4) is not None else "date_only",
                 )
             except ValueError:
                 pass
@@ -2916,32 +2907,23 @@ class CrawlService:
             marker in host for marker in ("openai.com", "anthropic.com", "qbitai.com", "a16z.com")
         )
 
-    def _target_date(self, run_timestamp: datetime | None) -> Any:
-        timestamp = run_timestamp or db_now()
-        if timestamp.tzinfo:
-            timestamp = timestamp.astimezone(TZ).replace(tzinfo=None)
-        return timestamp.date()
+    def _source_window(self, run_timestamp: datetime | None) -> tuple[datetime, datetime]:
+        return daily_window_for_run(run_timestamp or db_now())
 
-    def _is_item_on_target_day(self, item: ExtractedItem, run_timestamp: datetime | None) -> bool:
+    def _is_item_before_source_window(self, item: ExtractedItem, run_timestamp: datetime | None) -> bool:
         if not item.publish_time:
             return False
-        return item.publish_time.date() == self._target_date(run_timestamp)
-
-    def _is_item_before_target_day(self, item: ExtractedItem, run_timestamp: datetime | None) -> bool:
-        if not item.publish_time:
+        start, _end = self._source_window(run_timestamp)
+        published = item.publish_time
+        if published.tzinfo:
+            published = published.astimezone(TZ).replace(tzinfo=None)
+        if item.publish_time_status == "date_only" and published.date() == start.date():
             return False
-        return item.publish_time.date() < self._target_date(run_timestamp)
-
-    def _source_allows_previous_day(self, source: Source) -> bool:
-        host = urlparse(source.source_url).netloc.lower()
-        return any(marker in host for marker in OVERSEAS_DATE_LENIENT_HOST_MARKERS)
+        return published < start
 
     def _is_item_in_source_window(self, source: Source, item: ExtractedItem, run_timestamp: datetime | None) -> bool:
-        if self._is_item_on_target_day(item, run_timestamp):
-            return True
-        if not item.publish_time or not self._source_allows_previous_day(source):
-            return False
-        return item.publish_time.date() == self._target_date(run_timestamp) - timedelta(days=1)
+        start, end = self._source_window(run_timestamp)
+        return in_daily_window_with_precision(item.publish_time, item.publish_time_status, start, end)
 
     def _content_exists(self, db: Session, source: Source, item: ExtractedItem) -> bool:
         canonical = canonicalize_url(item.url, source.source_url)

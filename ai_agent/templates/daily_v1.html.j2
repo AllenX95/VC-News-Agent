@@ -118,7 +118,7 @@
       <div class="eyebrow">Daily Investment Intelligence</div>
       <div class="masthead-row">
         <h1>{{ report.headline }}</h1>
-        <div class="date-block"><strong>{{ report.report_date }}</strong>结构化日报 · 模板 {{ report.template_version }}</div>
+        <div class="date-block"><strong>{{ report.report_date }}</strong>北京时间 {{ report.window_start[5:16] | replace('T', ' ') }} — {{ report.window_end[5:16] | replace('T', ' ') }} · 模板 {{ report.template_version }}</div>
       </div>
     </header>
     <section class="summary" aria-label="日报摘要">
