@@ -4,10 +4,64 @@ from datetime import datetime
 import unittest
 
 from ai_agent.models import Source
-from ai_agent.services import CrawlService
+from ai_agent.services import CrawlService, ExtractedItem
 
 
 class SourceFetcherTests(unittest.TestCase):
+    def test_article_window_is_previous_10_to_current_10_beijing(self) -> None:
+        source = Source(
+            source_name="Test Media",
+            source_category="venture_media",
+            source_url="https://source.test/news",
+        )
+        service = CrawlService()
+        run_at = datetime(2026, 8, 17, 10, 0)
+
+        self.assertFalse(
+            service._is_item_in_source_window(
+                source,
+                ExtractedItem(title="too old", url="https://source.test/old", publish_time=datetime(2026, 8, 16, 9, 59, 59)),
+                run_at,
+            )
+        )
+        self.assertTrue(
+            service._is_item_in_source_window(
+                source,
+                ExtractedItem(
+                    title="date only",
+                    url="https://source.test/date-only",
+                    publish_time=datetime(2026, 8, 16),
+                    publish_time_status="date_only",
+                ),
+                run_at,
+            )
+        )
+
+        parsed, status = service._date_from_text("发布于 2026-08-16")
+        self.assertEqual(parsed, datetime(2026, 8, 16))
+        self.assertEqual(status, "date_only")
+        self.assertTrue(
+            service._is_item_in_source_window(
+                source,
+                ExtractedItem(title="start", url="https://source.test/start", publish_time=datetime(2026, 8, 16, 10, 0)),
+                run_at,
+            )
+        )
+        self.assertTrue(
+            service._is_item_in_source_window(
+                source,
+                ExtractedItem(title="before end", url="https://source.test/end-minus", publish_time=datetime(2026, 8, 17, 9, 59, 59)),
+                run_at,
+            )
+        )
+        self.assertFalse(
+            service._is_item_in_source_window(
+                source,
+                ExtractedItem(title="next window", url="https://source.test/end", publish_time=datetime(2026, 8, 17, 10, 0)),
+                run_at,
+            )
+        )
+
     def test_cyzone_uses_article_cards_and_list_date(self) -> None:
         source = Source(
             source_name="创业邦资讯",
@@ -183,10 +237,12 @@ class SourceFetcherTests(unittest.TestCase):
 
         items = service.fetch_a16z_ai(source, run_timestamp=datetime(2026, 6, 12, 10, 0))
 
-        self.assertEqual([item.title for item in items], ["Current AI Post", "Previous AI Post"])
+        # 2026-06-11 00:00 UTC is 08:00 Beijing time, before this run's
+        # 2026-06-11 10:00 lower boundary.
+        self.assertEqual([item.title for item in items], ["Current AI Post"])
         self.assertNotIn("Unrelated global recommendation", [item.title for item in items])
 
-    def test_elsewhere_uses_article_cards_and_filters_to_target_day(self) -> None:
+    def test_elsewhere_uses_article_cards_and_keeps_date_only_window_days(self) -> None:
         source = Source(
             source_name="Elsewhere News 中文",
             source_category="venture_media",
@@ -227,7 +283,7 @@ class SourceFetcherTests(unittest.TestCase):
 
         items = service.fetch_elsewhere_news(source, run_timestamp=datetime(2026, 6, 15, 10, 0))
 
-        self.assertEqual([item.title for item in items], ["当前融资文章"])
+        self.assertEqual([item.title for item in items], ["当前融资文章", "前一日文章"])
         self.assertEqual(items[0].publish_time, datetime(2026, 6, 15))
         self.assertNotIn("文章", [item.title for item in items])
 

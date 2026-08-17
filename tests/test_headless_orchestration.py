@@ -9,6 +9,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from ai_agent.headless import main
 from ai_agent.orchestration import (
@@ -152,7 +153,11 @@ class HeadlessOrchestrationTests(unittest.TestCase):
             runtime.mkdir(parents=True)
             (runtime / ".daily-run.lock").write_text(
                 json.dumps(
-                    {"pid": os.getpid(), "run_id": "other", "started_at": "2026-08-17T09:59:00+08:00"}
+                    {
+                        "pid": os.getpid(),
+                        "run_id": "other",
+                        "started_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
+                    }
                 ),
                 encoding="utf-8",
             )

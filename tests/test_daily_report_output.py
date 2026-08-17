@@ -63,7 +63,7 @@ class DailyReportOutputTests(unittest.TestCase):
             source_category=self.industry_source.source_category,
             publish_time=None,
             publish_time_status="missing",
-            crawl_time=datetime(2026, 8, 17, 11, 0),
+            crawl_time=datetime(2026, 8, 16, 11, 0),
             summary="A company update.",
         )
         self.finance_primary = ContentItem(
@@ -130,6 +130,57 @@ class DailyReportOutputTests(unittest.TestCase):
         self.assertEqual(funding_item["url"], self.finance_primary.url)
         self.assertEqual(len(funding_item["sources"]), 2)
         self.assertEqual(report["stats"]["included_items"], 3)
+        self.assertEqual(report["window_start"], "2026-08-16T10:00:00+08:00")
+        self.assertEqual(report["window_end"], "2026-08-17T10:00:00+08:00")
+
+    def test_report_uses_half_open_10_to_10_window(self) -> None:
+        outside_before = ContentItem(
+            source_id=self.industry_source.source_id,
+            title="Before window",
+            url="https://source.test/outside-before",
+            canonical_url="https://source.test/outside-before",
+            source_name=self.industry_source.source_name,
+            source_category=self.industry_source.source_category,
+            publish_time=datetime(2026, 8, 16, 9, 59, 59),
+            publish_time_status="exact",
+            crawl_time=datetime(2026, 8, 17, 10, 0),
+        )
+        outside_end = ContentItem(
+            source_id=self.industry_source.source_id,
+            title="At next boundary",
+            url="https://source.test/outside-end",
+            canonical_url="https://source.test/outside-end",
+            source_name=self.industry_source.source_name,
+            source_category=self.industry_source.source_category,
+            publish_time=datetime(2026, 8, 17, 10, 0),
+            publish_time_status="exact",
+            crawl_time=datetime(2026, 8, 17, 10, 0),
+        )
+        date_only = ContentItem(
+            source_id=self.industry_source.source_id,
+            title="Previous day with date only",
+            url="https://source.test/date-only",
+            canonical_url="https://source.test/date-only",
+            source_name=self.industry_source.source_name,
+            source_category=self.industry_source.source_category,
+            publish_time=datetime(2026, 8, 16),
+            publish_time_status="date_only",
+            crawl_time=datetime(2026, 8, 17, 9, 50),
+        )
+        self.db.add_all([outside_before, outside_end, date_only])
+        self.db.commit()
+
+        report = build_daily_report_data(self.db, self.day.isoformat())
+        titles = {
+            item["title"]
+            for section in report["sections"]
+            for group in section["groups"]
+            for item in group["items"]
+        }
+        self.assertIn(self.industry_content.title, titles)
+        self.assertIn(date_only.title, titles)
+        self.assertNotIn(outside_before.title, titles)
+        self.assertNotIn(outside_end.title, titles)
 
     def test_empty_sections_are_retained_and_html_is_escaped_and_traceable(self) -> None:
         empty_report = build_daily_report_data(self.db, "2026-08-18")

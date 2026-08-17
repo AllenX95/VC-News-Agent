@@ -62,6 +62,8 @@ $env:VC_NEWS_SCHEDULER_MODE='external'
 
 Headless CLI 本身永远不会启动 APScheduler。
 
+每日任务的内容窗口统一为北京时间半开区间 `[前一天 10:00, 当天 10:00)`。Codex 或内部调度器只负责在每天 10:00 唤醒任务；抓取过滤和日报取数共用这一窗口，因此恰好在 10:00 发布的内容会归入下一期，避免重复或遗漏。
+
 ## 数据
 
 - SQLite 数据库：`data/ai_market_daily_main.sqlite3`
