@@ -19,6 +19,13 @@ export function setApiBaseUrl(value: string) {
   apiBaseUrl = value.replace(/\/$/, "");
 }
 
+/** Build the backend URL for a self-contained automated HTML daily report. */
+export function getAutomationLatestReportUrl(targetDate?: string | null) {
+  const url = new URL(`${apiBaseUrl}/api/v1/automation/latest-report`);
+  if (targetDate) url.searchParams.set("date", targetDate);
+  return url.toString();
+}
+
 export async function ensureBackend(): Promise<BackendLaunchResult> {
   if (window.__TAURI_INTERNALS__) {
     try {
@@ -107,6 +114,7 @@ export const api = {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.text();
   },
+  latestReportUrl: getAutomationLatestReportUrl,
 };
 
 export function notifyError(error: unknown) {

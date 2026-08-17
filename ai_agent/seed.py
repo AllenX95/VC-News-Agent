@@ -165,6 +165,32 @@ PREVIOUS_WEEK_FINANCING_REPORT_PROMPT = """你是一名服务于 VC/PE 投资团
 只输出最终 Markdown 报告，不要输出分析过程、JSON、代码围栏或额外解释。"""
 
 
+DAILY_INVESTMENT_REPORT_PROMPT = """你是一名服务于 VC/PE 投资团队的 AI 投资情报日报编辑。
+
+输入 JSON 的 report 字段是程序已经完成来源核验、去重和分类的确定性日报。请只基于输入事实，返回一个 JSON 对象，用于有限地增强日报的阅读质量。
+
+输出格式只能是：
+{
+  "executive_summary": "不超过 180 字的中文日报摘要",
+  "item_updates": [
+    {
+      "content_id": 123,
+      "summary": "可选的中文事实摘要",
+      "why_it_matters": "可选的事实性阅读提示",
+      "category": "technology|industry|funding",
+      "theme": "可选的二级主题"
+    }
+  ]
+}
+
+严格规则：
+1. 只能返回 executive_summary 和 item_updates 两个顶层字段；item_updates 中只能使用 content_id 或 event_id（且必须来自输入）以及 summary、why_it_matters、category、theme。
+2. 不得返回、修改或编造 URL、source、title、content_id、event_id 或其他来源信息；ID 只用于定位输入条目。
+3. 只能根据输入内容改写 summary、why_it_matters、一级 category 和二级 theme，不得补充外部事实。
+4. category 只能是 technology、industry、funding；没有可靠依据时不要改分类。
+5. 如果没有必要修改条目，item_updates 返回空数组；只输出 JSON，不要输出 Markdown、解释文字或代码围栏。"""
+
+
 DEFAULT_PROMPTS = {
     "generate_current_week_financing_report": (
         "默认 - 本周融资总结",
@@ -349,7 +375,11 @@ financing, product_update, research, model_release, company_news, repo, product_
 4. 不输出投资建议、评分或推荐。
 5. 如果输入为空，明确说明今日暂无可汇总内容。
 
-输出 Markdown，结构简洁，适合直接阅读。""",
+        输出 Markdown，结构简洁，适合直接阅读。""",
+    ),
+    "generate_daily_investment_report": (
+        "默认 - 每日投资日报增强",
+        DAILY_INVESTMENT_REPORT_PROMPT,
     ),
 }
 
@@ -572,6 +602,11 @@ LLM_TASKS = [
         "每日汇总 LLM 文本",
         "可选任务。基于结构化快照生成每日汇总文本，默认关闭。",
     ),
+    (
+        "generate_daily_investment_report",
+        "每日投资日报增强",
+        "可选任务。基于确定性日报生成 executive_summary 和受白名单约束的条目增强；URL、来源和 ID 由程序保留。",
+    ),
 ]
 
 
@@ -610,8 +645,16 @@ def ensure_llm_defaults(db: Session) -> bool:
         default_prompt_by_task[task_name] = prompt
 
     default_llm_config_id = db.scalar(
-        select(LLMTask.llm_config_id).where(LLMTask.task_name == "process_content_metadata")
+        select(LLMTask.llm_config_id).where(
+            LLMTask.task_name == "process_content_metadata",
+            LLMTask.enabled.is_(True),
+            LLMTask.llm_config_id.is_not(None),
+        )
     )
+    if default_llm_config_id:
+        configured_default = db.get(LLMConfig, default_llm_config_id)
+        if not configured_default or not configured_default.enabled:
+            default_llm_config_id = None
     if not default_llm_config_id:
         default_llm_config_id = db.scalar(
             select(LLMConfig.llm_config_id)
@@ -623,6 +666,7 @@ def ensure_llm_defaults(db: Session) -> bool:
         "classify_ai_financing_relevance",
         "generate_current_week_financing_report",
         "generate_previous_week_financing_report",
+        "generate_daily_investment_report",
     }
     for task_name, _, _ in LLM_TASKS:
         existing_task = db.scalar(select(LLMTask).where(LLMTask.task_name == task_name))

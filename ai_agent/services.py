@@ -683,6 +683,120 @@ class LLMService:
             return None
         return task, config, prompt, base_url, api_key, model_name
 
+    def call_structured_json_task(
+        self,
+        db: Session,
+        task_name: str,
+        payload: dict[str, Any],
+        *,
+        content_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Run a configured task and return one structured JSON object.
+
+        This is the shared task seam for report-level LLM calls.  It deliberately
+        reuses the same task binding, encrypted configuration, context-window
+        guard, concurrency setting and provider adapter as the existing content
+        and financing tasks.  Callers own the surrounding transaction; flushing
+        the log here makes the audit record visible without committing unrelated
+        work.
+        """
+
+        assets = self._task_assets(db, task_name)
+        if not assets:
+            raise ValueError(f"LLM task is not configured: {task_name}")
+        task, config, prompt, base_url, api_key, model_name = assets
+        started = time.monotonic()
+        input_token_count: int | None = None
+        output_token_count: int | None = None
+        try:
+            user_content = json_dumps(payload)
+            input_token_count = estimate_llm_tokens(prompt.prompt_text, user_content)
+            context_window_tokens = max(1, config.context_window_tokens or 1_000_000)
+            if input_token_count > context_window_tokens:
+                raise RuntimeError(
+                    f"Input is about {input_token_count} tokens, exceeding model context window {context_window_tokens} tokens"
+                )
+            output_text = self._call_model(
+                config,
+                base_url,
+                api_key,
+                model_name,
+                prompt.prompt_text,
+                user_content,
+                concurrency_limit=get_int_setting(db, "llm_parallelism", 2, 1, 6),
+                require_json=True,
+            ).strip()
+            output_token_count = estimate_llm_tokens(output_text)
+            data = self._extract_json(output_text)
+            if not isinstance(data, dict):
+                raise ValueError("structured JSON task must return an object")
+        except Exception as exc:  # noqa: BLE001
+            self._record_structured_json_log(
+                db,
+                task,
+                config,
+                prompt,
+                model_name,
+                started,
+                "failed",
+                content_id=content_id,
+                input_token_count=input_token_count,
+                output_token_count=output_token_count,
+                error_message=first_chars(str(exc), 500),
+            )
+            raise
+
+        self._record_structured_json_log(
+            db,
+            task,
+            config,
+            prompt,
+            model_name,
+            started,
+            "success",
+            content_id=content_id,
+            input_token_count=input_token_count,
+            output_token_count=output_token_count,
+        )
+        return data
+
+    def _record_structured_json_log(
+        self,
+        db: Session,
+        task: LLMTask,
+        config: LLMConfig,
+        prompt: Prompt,
+        model_name: str,
+        started: float,
+        status: str,
+        *,
+        content_id: int | None = None,
+        input_token_count: int | None = None,
+        output_token_count: int | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        try:
+            db.add(
+                LLMLog(
+                    task_name=task.task_name,
+                    llm_config_id=config.llm_config_id,
+                    prompt_id=prompt.prompt_id,
+                    content_id=content_id,
+                    model_name=model_name,
+                    input_token_count=input_token_count,
+                    output_token_count=output_token_count,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    status=status,
+                    error_message=error_message,
+                )
+            )
+            db.flush()
+        except Exception:
+            # An audit write must not turn an otherwise useful LLM response into
+            # a pipeline failure.  This matches the existing financing-report
+            # logging seam and lets the caller decide transaction boundaries.
+            db.rollback()
+
     def generate_financing_report(
         self,
         db: Session,

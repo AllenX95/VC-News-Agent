@@ -6,8 +6,10 @@ __pycache__/
 data/*.sqlite3
 data/*.sqlite3-*
 data/secret.key
+data/runs/
 backups/*.sqlite3
 archives/*
+test-output/
 *_SPEC.md
 node_modules/
 frontend/node_modules/

@@ -8,7 +8,7 @@ from datetime import date, datetime, time as dt_time, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,8 +31,10 @@ from .models import (
     TagDefinition,
 )
 from .intelligence import IntelligenceInbox
+from .automation_status import AutomationStatusReader
 from .financing_events import EventConflictError, FinancingEventCatalog
 from .reports import ReportWorkspace
+from .run_lock import RunLock
 from .security import decrypt_value, encrypt_value, mask_secret
 from .seed import LLM_TASKS, ensure_llm_defaults
 from .services import (
@@ -365,39 +367,52 @@ def _parse_query_date(value: str | None) -> date | None:
         raise HTTPException(status_code=422, detail="Date must use YYYY-MM-DD format") from exc
 
 
-def _run_crawl_background(run_timestamp: datetime | None = None, job_id: int | None = None) -> None:
+def _run_crawl_background(
+    run_timestamp: datetime | None = None,
+    job_id: int | None = None,
+    run_lock: RunLock | None = None,
+) -> None:
     run_timestamp = run_timestamp or db_now()
-    with SessionLocal() as db:
-        job = db.get(CrawlJob, job_id) if job_id else None
-        if job:
-            job.status = "running"
-            job.started_at = db_now()
-            db.commit()
-        try:
-            run = CrawlService().run_all_sources(db, manual=True, run_timestamp=run_timestamp)
-            progress = crawl_progress.snapshot()
+    try:
+        with SessionLocal() as db:
+            job = db.get(CrawlJob, job_id) if job_id else None
             if job:
-                job.status = "succeeded" if run.status == "success" else run.status
-                job.finished_at = db_now()
-                job.total_sources = progress.get("total_sources", 0)
-                job.failed_sources = progress.get("failed_sources", 0)
-                job.succeeded_sources = max(0, progress.get("completed_sources", 0) - job.failed_sources)
-                job.message = run.message or progress.get("message", "")
+                job.status = "running"
+                job.started_at = db_now()
                 db.commit()
-        except Exception as exc:
+            run = CrawlService().run_all_sources(db, manual=True, run_timestamp=run_timestamp)
             if job:
-                db.rollback()
+                progress = crawl_progress.snapshot()
+                try:
+                    job.status = "succeeded" if run.status == "success" else run.status
+                    job.finished_at = db_now()
+                    job.total_sources = progress.get("total_sources", 0)
+                    job.failed_sources = progress.get("failed_sources", 0)
+                    job.succeeded_sources = max(0, progress.get("completed_sources", 0) - job.failed_sources)
+                    job.message = run.message or progress.get("message", "")
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+    except Exception as exc:
+        if job_id:
+            with SessionLocal() as db:
                 job = db.get(CrawlJob, job_id)
                 if job:
                     job.status = "failed"
                     job.finished_at = db_now()
                     job.message = str(exc)
                     db.commit()
-            raise
+        raise
+    finally:
+        if run_lock is not None:
+            run_lock.release()
 
 
-def _run_weekly_crawl_background(date_strings: list[str]) -> None:
+def _run_weekly_crawl_background(date_strings: list[str], run_lock: RunLock | None = None) -> None:
     if not weekly_crawl_lock.acquire(blocking=False):
+        if run_lock is not None:
+            run_lock.release()
         return
     try:
         for date_str in date_strings:
@@ -416,6 +431,8 @@ def _run_weekly_crawl_background(date_strings: list[str]) -> None:
                     db.commit()
     finally:
         weekly_crawl_lock.release()
+        if run_lock is not None:
+            run_lock.release()
 
 
 def _prepare_manual_crawl_progress() -> datetime:
@@ -454,6 +471,42 @@ def health() -> dict[str, Any]:
             "journal_mode": journal_mode,
         },
     }
+
+
+@router.get("/automation/status")
+def automation_status(
+    target_date: str | None = Query(default=None),
+    date_query: str | None = Query(default=None, alias="date"),
+) -> dict[str, Any]:
+    """Return the read-only status of the Codex/headless daily run."""
+
+    return AutomationStatusReader().get_status(target_date or date_query)
+
+
+@router.get("/automation/latest-report", response_class=FileResponse)
+def automation_latest_report(
+    target_date: str | None = Query(default=None),
+    date_query: str | None = Query(default=None, alias="date"),
+) -> FileResponse:
+    """Serve the latest safe self-contained HTML daily report."""
+
+    reader = AutomationStatusReader()
+    selected_date = target_date or date_query
+    status = reader.get_status(selected_date)
+    try:
+        report_path = reader.resolve_latest_html(selected_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=404, detail="日报路径无效") from exc
+    except FileNotFoundError as exc:
+        if status.get("running"):
+            raise HTTPException(status_code=409, detail="日报正在生成，请稍后重试") from exc
+        raise HTTPException(status_code=404, detail="暂无可用的 HTML 日报") from exc
+
+    if status.get("running"):
+        raise HTTPException(status_code=409, detail="日报正在生成，请稍后重试")
+    return FileResponse(report_path, media_type="text/html; charset=utf-8")
 
 
 @router.get("/app-info")
@@ -548,7 +601,7 @@ def dashboard(
 
 
 @router.post("/crawl/run")
-def run_crawl(background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict[str, Any]:
+def run_crawl(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict[str, Any]:
     if crawl_progress.is_running():
         return {"ok": False, "message": "Crawl is already running", "progress": crawl_progress.snapshot()}
     run_timestamp = _prepare_manual_crawl_progress()
@@ -556,7 +609,9 @@ def run_crawl(background_tasks: BackgroundTasks, db: Session = Depends(get_db)) 
     db.add(job)
     db.commit()
     db.refresh(job)
-    background_tasks.add_task(_run_crawl_background, run_timestamp, job.job_id)
+    run_lock = getattr(request.state, "run_lock", None)
+    request.state.keep_run_lock = run_lock is not None
+    background_tasks.add_task(_run_crawl_background, run_timestamp, job.job_id, run_lock)
     return {
         "ok": True,
         "job_id": job.job_id,
@@ -606,7 +661,7 @@ def crawl_week_status(db: Session = Depends(get_db)) -> dict[str, Any]:
 
 
 @router.post("/crawl/week-backfill")
-def crawl_week_backfill(background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict[str, Any]:
+def crawl_week_backfill(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict[str, Any]:
     if weekly_crawl_lock.locked():
         return {"ok": False, "message": "本周补抓正在运行", "progress": crawl_progress.snapshot()}
     if crawl_progress.is_running():
@@ -619,7 +674,9 @@ def crawl_week_backfill(background_tasks: BackgroundTasks, db: Session = Depends
 
     total_sources = db.scalar(select(func.count(Source.source_id)).where(Source.enabled.is_(True))) or 0
     crawl_progress.start(total_sources * len(missing_dates), f"本周补抓已排队：{len(missing_dates)} 天", db_now())
-    background_tasks.add_task(_run_weekly_crawl_background, missing_dates)
+    run_lock = getattr(request.state, "run_lock", None)
+    request.state.keep_run_lock = run_lock is not None
+    background_tasks.add_task(_run_weekly_crawl_background, missing_dates, run_lock)
     return {
         "ok": True,
         "message": f"本周补抓已开始：{', '.join(missing_dates)}",
