@@ -1,13 +1,13 @@
-# PRD 01：VC News Agent × Codex 整体架构设计
+# PRD 01：VC-news-agent-AI × Codex 整体架构设计
 
 > 状态：Ready for implementation
 > 版本：1.0
 > 日期：2026-08-17
-> 关联文档：Codex 侧方案 PRD、VC-news-agent 侧改动建议 PRD
+> 关联文档：Codex 侧方案 PRD、VC-news-agent-AI 侧改动建议 PRD
 
 ## Problem Statement
 
-VC News Agent 已经具备 GUI/WebUI、信息源抓取、内容处理、LLM 配置、融资事件和报告工作区，但当前自动运行依赖应用内部调度器，主要产物仍是 Markdown，也缺少一个适合 Codex 无人值守调用的稳定执行契约。
+VC-news-agent-AI 已经具备 GUI/WebUI、信息源抓取、内容处理、LLM 配置、融资事件和报告工作区，但当前自动运行依赖应用内部调度器，主要产物仍是 Markdown，也缺少一个适合 Codex 无人值守调用的稳定执行契约。
 
 用户希望每天由 Codex 自动产出并交付 HTML 投资情报日报，同时继续在 GUI 中管理信息源、LLM provider、模型、API Key、Prompt、并发参数，并保留人工抓取、补跑、重新生成和复核入口。如果让 Codex 自行抓新闻、生成自由格式 HTML，或为 Headless 入口再建立一套配置，会造成业务逻辑分叉、日报样式漂移、配置不一致和难以排障。若 Codex 定时任务与当前 APScheduler 同时启用，还会产生重复抓取和 SQLite 并发风险。
 
@@ -18,10 +18,10 @@ VC News Agent 已经具备 GUI/WebUI、信息源抓取、内容处理、LLM 配�
 采用“共享业务内核、双执行入口、单一调度主责、结构化产物契约”的架构：
 
 - GUI/WebUI 继续负责业务配置、人工执行、状态查看和人工复核。
-- VC News Agent 新增同步 Headless 入口，但不新增 provider、模型、Prompt 或信息源配置体系。
+- VC-news-agent-AI 新增同步 Headless 入口，但不新增 provider、模型、Prompt 或信息源配置体系。
 - GUI/API 与 Headless 调用同一个高层 orchestration seam，内部复用抓取、清洗、去重、LLM、融资事件和报告服务。
 - Codex Automation 负责定时唤醒、运行前检查、调用 Headless、验证产物并向用户交付结果，不重新执行领域研究。
-- VC News Agent 输出版本化 `run_manifest`、`report_data`、HTML、Markdown 和日志；Codex 只依据这些契约判断成功、部分成功、跳过或失败。
+- VC-news-agent-AI 输出版本化 `run_manifest`、`report_data`、HTML、Markdown 和日志；Codex 只依据这些契约判断成功、部分成功、跳过或失败。
 - HTML 由结构化报告数据和版本化 Jinja 模板确定性渲染，固定“技术进展、产业新闻、融资新闻”三个一级类目，允许动态二级主题。
 - 兼容迁移期保留内部调度回滚能力，但正式运行时 Codex 是唯一调度主责；单实例锁防止 GUI 与自动任务重复执行。
 - 第一阶段直接在真实本地项目目录运行；后续再将 runtime data 与代码目录解耦。

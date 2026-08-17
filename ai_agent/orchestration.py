@@ -442,7 +442,27 @@ class DailyRunOrchestrator:
                         warnings.extend(str(item) for item in report_warnings if str(item) not in warnings)
                     stats = report_data.get("stats")
                     if isinstance(stats, dict):
-                        counts.update({str(k): int(v) for k, v in stats.items() if isinstance(v, (int, float))})
+                        # Report stats describe the rendered selection and may
+                        # use legacy names such as sources_attempted for the
+                        # number of sources represented in the report.  They
+                        # must not overwrite the crawl's operational counts.
+                        for key, value in stats.items():
+                            if not isinstance(value, (int, float)):
+                                continue
+                            normalized_key = str(key)
+                            if normalized_key in {
+                                "sources_attempted",
+                                "sources_succeeded",
+                                "sources_failed",
+                                "failed_sources",
+                                "raw_items",
+                                "items_created",
+                                "failed_items",
+                            } and normalized_key in counts:
+                                continue
+                            if normalized_key == "failed_sources" and "sources_failed" in counts:
+                                continue
+                            counts[normalized_key] = int(value)
                 report_data_path = artifacts_root / f"{file_prefix}-report-data.json"
                 try:
                     _atomic_write_json(report_data_path, report_data)
@@ -853,6 +873,7 @@ def _crawl_summary(value: Any) -> tuple[str, dict[str, int], list[str]]:
     new_items = int(read("new_items", read("items_created", 0)) or 0)
     succeeded_sources = int(read("sources_succeeded", 0) or 0)
     failed_sources = int(read("sources_failed", 0) or 0)
+    attempted_sources = int(read("sources_attempted", succeeded_sources + failed_sources) or 0)
     if failed and status == "success":
         status = "partial"
     counts = {
@@ -861,11 +882,15 @@ def _crawl_summary(value: Any) -> tuple[str, dict[str, int], list[str]]:
         "failed_items": failed,
         "sources_succeeded": succeeded_sources,
         "sources_failed": failed_sources,
+        "sources_attempted": attempted_sources,
     }
     warnings = []
     message = read("message", "")
     if message and status != "success":
         warnings.append(_safe_error(str(message)))
+    failed_source_names = read("failed_source_names", [])
+    if isinstance(failed_source_names, (list, tuple, set)) and failed_source_names:
+        warnings.append("failed sources: " + ", ".join(_safe_error(str(name)) for name in failed_source_names))
     return status, counts, warnings
 
 

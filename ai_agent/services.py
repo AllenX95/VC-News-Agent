@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import socket
 import sqlite3
+import ssl
+import tempfile
 import time
 import traceback
 import threading
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -20,6 +24,9 @@ import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -1283,6 +1290,8 @@ class CrawlService:
             )
             db.commit()
             total = new_items = failed_items = 0
+            succeeded_sources = failed_sources = 0
+            failed_source_names: list[str] = []
             if source_parallelism <= 1:
                 for source in sources:
                     crawl_progress.source_started(source.source_name)
@@ -1297,8 +1306,15 @@ class CrawlService:
                             source_run.failed_items,
                             ok=source_run.status == "success",
                         )
+                        if source_run.status == "success":
+                            succeeded_sources += 1
+                        else:
+                            failed_sources += 1
+                            failed_source_names.append(source.source_name)
                     except Exception as exc:  # noqa: BLE001
                         failed_items += 1
+                        failed_sources += 1
+                        failed_source_names.append(source.source_name)
                         crawl_progress.source_finished(source.source_name, 0, 1, ok=False)
                         self._record_error(db, source, run.crawl_run_id, "source_run_failed", str(exc), source.source_url)
             else:
@@ -1339,6 +1355,11 @@ class CrawlService:
                             int(result.get("failed_items") or 0),
                             ok=result.get("status") == "success",
                         )
+                        if result.get("status") == "success":
+                            succeeded_sources += 1
+                        else:
+                            failed_sources += 1
+                            failed_source_names.append(str(result.get("source_name") or fallback_source_name))
 
             run.total_items = total
             run.new_items = new_items
@@ -1346,6 +1367,13 @@ class CrawlService:
             run.status = "success" if failed_items == 0 else "partial_success"
             run.finished_at = db_now()
             run.message = f"新增 {new_items} 条，失败 {failed_items} 项"
+            # Transient operational counters consumed by the headless
+            # orchestrator.  They deliberately are not persisted as columns
+            # on the historical CrawlRun schema.
+            run.sources_attempted = len(sources)
+            run.sources_succeeded = succeeded_sources
+            run.sources_failed = failed_sources
+            run.failed_source_names = list(dict.fromkeys(failed_source_names))
 
             try:
                 cleanup_expired(db)
@@ -1607,32 +1635,53 @@ class CrawlService:
         return items
 
     def fetch_product_hunt(self, source: Source) -> list[ExtractedItem]:
-        html = self._get_html(source.source_url, source.timeout_seconds)
-        soup = BeautifulSoup(html, "html.parser")
+        # Product Hunt's interactive homepage is protected by Cloudflare and
+        # returns 403 to unattended HTTP clients.  Its public Atom feed is the
+        # stable machine-readable endpoint for the same daily product list.
+        feed_url = "https://www.producthunt.com/feed"
+        xml_text = self._get_html(feed_url, source.timeout_seconds)
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            raise RuntimeError("Product Hunt Atom feed 返回无效 XML") from exc
+
+        namespace = {"atom": "http://www.w3.org/2005/Atom"}
         candidates: dict[str, ExtractedItem] = {}
-        for anchor in soup.find_all("a", href=True):
-            href = anchor["href"]
-            if "/products/" not in href:
+        for entry in root.findall("atom:entry", namespace):
+            title = clean_text(entry.findtext("atom:title", default="", namespaces=namespace))
+            link = next(
+                (
+                    element.get("href", "")
+                    for element in entry.findall("atom:link", namespace)
+                    if element.get("rel", "alternate") == "alternate"
+                ),
+                "",
+            )
+            if not title or not link or "/products/" not in link:
                 continue
-            title = clean_text(anchor.get_text(" "))
-            title = re.sub(r"^\d+\.\s*", "", title).strip()
             if len(title) < 3 or len(title) > 120 or title.lower() in {"artificial intelligence"}:
                 continue
-            url = canonicalize_url(href, "https://www.producthunt.com")
-            summary = self._product_hunt_summary(anchor, title)
+            url = canonicalize_url(link, "https://www.producthunt.com")
+            content_html = entry.findtext("atom:content", default="", namespaces=namespace)
+            summary = ""
+            if content_html:
+                summary_soup = BeautifulSoup(content_html, "html.parser")
+                first_paragraph = summary_soup.find("p")
+                summary = clean_text(first_paragraph.get_text(" ") if first_paragraph else summary_soup.get_text(" "))
+            published = parse_datetime(entry.findtext("atom:published", default="", namespaces=namespace))
             candidates[url] = ExtractedItem(
                 title=title,
                 url=url,
                 summary=summary_chars(summary or title),
                 clean_text=summary or title,
-                publish_time=db_now(),
-                publish_time_status="estimated",
+                publish_time=published,
+                publish_time_status="exact" if published else "missing",
                 language="en",
             )
             if len(candidates) >= source.item_limit_per_run:
                 break
         if not candidates:
-            raise RuntimeError("Product Hunt 页面未解析到今日榜单项，可能需要 Playwright Worker 兜底")
+            raise RuntimeError("Product Hunt Atom feed 未解析到产品条目")
         return list(candidates.values())
 
     def fetch_36kr(self, source: Source, run_timestamp: datetime | None = None) -> list[ExtractedItem]:
@@ -2341,6 +2390,21 @@ class CrawlService:
                 response.raise_for_status()
                 response.encoding = response.apparent_encoding or response.encoding
                 return response.text
+            except requests.exceptions.SSLError as exc:
+                # Some otherwise valid sites omit their issuing intermediate
+                # certificate.  Fetch the certificate named by the leaf's AIA
+                # extension, then retry with normal hostname and root-chain
+                # verification.  This is intentionally not `verify=False`.
+                try:
+                    response = self._get_with_aia_intermediate(url, timeout)
+                    response.raise_for_status()
+                    response.encoding = response.apparent_encoding or response.encoding
+                    return response.text
+                except Exception as retry_exc:  # noqa: BLE001
+                    last_error = retry_exc
+                    if attempt == 2:
+                        break
+                    time.sleep(0.8 * (attempt + 1))
             except requests.RequestException as exc:
                 last_error = exc
                 if attempt == 2:
@@ -2349,6 +2413,60 @@ class CrawlService:
         if last_error:
             raise last_error
         raise RuntimeError(f"未能获取页面：{url}")
+
+    def _get_with_aia_intermediate(self, url: str, timeout: int) -> requests.Response:
+        """Retry one HTTPS request with a securely verified AIA intermediate."""
+
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("AIA certificate recovery requires an HTTPS URL")
+
+        context = ssl._create_unverified_context()  # noqa: SLF001 - discovery only; final request verifies the chain.
+        with socket.create_connection((parsed.hostname, parsed.port or 443), timeout=timeout) as raw_socket:
+            with context.wrap_socket(raw_socket, server_hostname=parsed.hostname) as tls_socket:
+                leaf_der = tls_socket.getpeercert(binary_form=True)
+        leaf = x509.load_der_x509_certificate(leaf_der)
+        aia = leaf.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
+        issuer_urls = [
+            str(description.access_location.value)
+            for description in aia
+            if description.access_method == AuthorityInformationAccessOID.CA_ISSUERS
+            and str(description.access_location.value).startswith(("http://", "https://"))
+        ]
+        if not issuer_urls:
+            raise requests.exceptions.SSLError("server certificate does not advertise a CA issuer URL")
+
+        last_error: Exception | None = None
+        for issuer_url in issuer_urls:
+            try:
+                issuer_response = requests.get(issuer_url, headers=REQUEST_HEADERS, timeout=timeout)
+                issuer_response.raise_for_status()
+                try:
+                    intermediate = x509.load_der_x509_certificate(issuer_response.content)
+                except ValueError:
+                    intermediate = x509.load_pem_x509_certificate(issuer_response.content)
+                if intermediate.subject != leaf.issuer:
+                    raise requests.exceptions.SSLError("AIA issuer subject does not match the server certificate")
+                constraints = intermediate.extensions.get_extension_for_class(x509.BasicConstraints).value
+                if not constraints.ca:
+                    raise requests.exceptions.SSLError("AIA issuer certificate is not a CA")
+
+                bundle_path: Path | None = None
+                try:
+                    with tempfile.NamedTemporaryFile(prefix="vc-news-agent-ai-ca-", suffix=".pem", delete=False) as bundle:
+                        bundle.write(Path(requests.certs.where()).read_bytes())
+                        bundle.write(b"\n")
+                        bundle.write(intermediate.public_bytes(serialization.Encoding.PEM))
+                        bundle_path = Path(bundle.name)
+                    return requests.get(url, headers=REQUEST_HEADERS, timeout=timeout, verify=str(bundle_path))
+                finally:
+                    if bundle_path is not None:
+                        bundle_path.unlink(missing_ok=True)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise requests.exceptions.SSLError("unable to recover the server certificate chain")
 
     def _collect_links(
         self,

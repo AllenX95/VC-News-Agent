@@ -139,8 +139,6 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import { Delete, FolderOpened } from "@element-plus/icons-vue";
-import { isTauri } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import { api, notifyError } from "../api/client";
 
 const route = useRoute();
@@ -296,23 +294,11 @@ async function identifyThisWeek() {
 async function selectReportDirectory() {
   selectingReportDir.value = true;
   try {
-    if (isTauri()) {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "选择周报保存文件夹",
-        defaultPath: reportOutputDir.value || undefined,
-      });
-      if (typeof selected === "string") {
-        reportOutputDir.value = selected;
-      }
-    } else {
-      const payload = await api.post<{ path: string }>("/system/select-directory", {
-        initial_path: reportOutputDir.value,
-      });
-      if (payload.path) {
-        reportOutputDir.value = payload.path;
-      }
+    const payload = await api.post<{ path: string }>("/system/select-directory", {
+      initial_path: reportOutputDir.value,
+    });
+    if (payload.path) {
+      reportOutputDir.value = payload.path;
     }
   } catch (error) {
     notifyError(error);

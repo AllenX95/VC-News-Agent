@@ -10,11 +10,9 @@ Set-Location $Root
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $BaseBackendPort = 8011
 $MaxBackendPort = 8020
-$FrontendPort = 5173
-$FrontendBaseUrl = "http://127.0.0.1:$FrontendPort"
-$AppUrl = "$FrontendBaseUrl/#/"
 $LogDir = Join-Path $Root "logs"
 $BackendPortFile = Join-Path $LogDir "web-backend.port"
+$FrontendIndex = Join-Path $Root "frontend\dist\index.html"
 
 function Wait-ForKey {
     Write-Host ""
@@ -74,10 +72,11 @@ function Find-FreeBackendPort {
     return 0
 }
 
-function Test-VueFrontend {
+function Test-WebFrontend {
+    param([int]$Port)
     try {
-        $response = Invoke-WebRequest -Uri $FrontendBaseUrl -UseBasicParsing -TimeoutSec 2
-        return $response.StatusCode -eq 200 -and $response.Content.Contains('/src/main.ts')
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 2
+        return $response.StatusCode -eq 200 -and $response.Content.Contains('<div id="app"></div>')
     } catch {
         return $false
     }
@@ -132,9 +131,30 @@ if (-not (Test-Path -LiteralPath (Join-Path $Root "node_modules\vite\package.jso
     exit 1
 }
 
+Write-Host "Building production WebUI..."
+& $Npm.Source run frontend:build
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $FrontendIndex -PathType Leaf)) {
+    Write-Host "WebUI build failed." -ForegroundColor Red
+    Wait-ForKey
+    exit 1
+}
+
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
 $BackendPort = Find-AgentBackendPort
+if ($BackendPort -ne 0 -and -not (Test-WebFrontend -Port $BackendPort)) {
+    Write-Host "Restarting the existing backend so it can load the production WebUI..."
+    try {
+        Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$BackendPort/shutdown" -TimeoutSec 3 | Out-Null
+    } catch {
+        Write-Host "Could not request a clean backend restart: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    for ($i = 0; $i -lt 20 -and (Test-PortOpen -Port $BackendPort); $i++) {
+        Start-Sleep -Milliseconds 250
+    }
+    $BackendPort = 0
+}
+
 if ($BackendPort -eq 0) {
     $BackendPort = Find-FreeBackendPort
     if ($BackendPort -eq 0) {
@@ -147,7 +167,7 @@ if ($BackendPort -eq 0) {
     Write-Host "Starting backend on port $BackendPort..."
     $backendOut = Join-Path $LogDir "web-backend.out.log"
     $backendErr = Join-Path $LogDir "web-backend.err.log"
-    $backendCommand = "set `"VC_NEWS_DISABLE_STARTUP_CATCHUP=1`" && `"$Python`" -B app.py --port $BackendPort --no-open-browser 1>>`"$backendOut`" 2>>`"$backendErr`""
+    $backendCommand = "set `"VC_NEWS_SCHEDULER_MODE=external`" && `"$Python`" -B app.py --port $BackendPort --no-open-browser 1>>`"$backendOut`" 2>>`"$backendErr`""
     Start-HiddenCommand -Command $backendCommand
 
     if (-not (Wait-UntilReady -Probe { Test-AgentBackend -Port $BackendPort })) {
@@ -162,29 +182,13 @@ if ($BackendPort -eq 0) {
 
 Set-Content -LiteralPath $BackendPortFile -Value $BackendPort -Encoding ASCII
 $BackendBaseUrl = "http://127.0.0.1:$BackendPort"
+$AppUrl = "$BackendBaseUrl/#/"
 
-if (-not (Test-VueFrontend)) {
-    if (Test-PortOpen -Port $FrontendPort) {
-        Write-Host "Port $FrontendPort is occupied by another application." -ForegroundColor Red
-        Write-Host "Close that application and run this launcher again."
-        Wait-ForKey
-        exit 1
-    }
-
-    Write-Host "Starting web frontend on port $FrontendPort..."
-    $frontendOut = Join-Path $LogDir "web-frontend.out.log"
-    $frontendErr = Join-Path $LogDir "web-frontend.err.log"
-    $frontendCommand = "set `"VITE_API_BASE_URL=$BackendBaseUrl`" && npm run frontend:dev 1>>`"$frontendOut`" 2>>`"$frontendErr`""
-    Start-HiddenCommand -Command $frontendCommand
-
-    if (-not (Wait-UntilReady -Probe { Test-VueFrontend })) {
-        Write-Host "Web frontend startup timed out." -ForegroundColor Red
-        Write-Host "See logs\web-frontend.err.log for details."
-        Wait-ForKey
-        exit 1
-    }
-} else {
-    Write-Host "Reusing web frontend on port $FrontendPort."
+if (-not (Test-WebFrontend -Port $BackendPort)) {
+    Write-Host "Backend is running, but the production WebUI is unavailable." -ForegroundColor Red
+    Write-Host "See logs\web-backend.err.log for details."
+    Wait-ForKey
+    exit 1
 }
 
 if ($NoBrowser) {

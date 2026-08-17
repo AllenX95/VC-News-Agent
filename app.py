@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 import secrets
 import threading
 import time
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.staticfiles import StaticFiles
 
 from ai_agent.api_v1 import router as api_v1_router
 from ai_agent.config import scheduler_mode_info
@@ -33,8 +35,6 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "http://tauri.localhost",
-        "tauri://localhost",
     ],
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
@@ -91,6 +91,7 @@ class RunLockWriteGuardMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RunLockWriteGuardMiddleware)
 app.include_router(api_v1_router)
+FRONTEND_DIST_DIR = Path(__file__).resolve().parent / "frontend" / "dist"
 
 
 def startup_catchup_disabled() -> bool:
@@ -138,7 +139,7 @@ def on_startup() -> None:
             if scheduler_mode != "internal":
                 message = f"调度模式 {scheduler_mode} 已跳过内部调度器和启动补抓"
             else:
-                message = "桌面端启动已跳过自动补抓"
+                message = "WebUI 启动已跳过自动补抓"
             add_session_log(db, "startup_catchup_skipped", message)
         db.commit()
         CrawlService().mark_stale_not_configured_as_pending(db)
@@ -146,11 +147,6 @@ def on_startup() -> None:
         app_scheduler.start()
         if not startup_catchup_disabled():
             threading.Thread(target=app_scheduler.run_startup_catchup_if_needed, daemon=True).start()
-
-
-@app.get("/")
-def root() -> dict[str, str]:
-    return {"ok": "true", "app_id": "ai-investment-agent", "api": "/api/v1"}
 
 
 @app.get("/api/app-info")
@@ -162,6 +158,20 @@ def legacy_app_info() -> dict[str, str]:
 def shutdown(background_tasks: BackgroundTasks) -> dict[str, bool]:
     background_tasks.add_task(shutdown_process)
     return {"ok": True}
+
+
+if FRONTEND_DIST_DIR.is_dir():
+    # Hash-based Vue routing keeps all application paths under this static mount.
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="webui")
+else:
+    @app.get("/")
+    def root() -> dict[str, str]:
+        return {
+            "ok": "true",
+            "app_id": "ai-investment-agent",
+            "api": "/api/v1",
+            "webui": "frontend/dist is missing; run npm run frontend:build",
+        }
 
 
 if __name__ == "__main__":

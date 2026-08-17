@@ -1,15 +1,12 @@
 {
-  "name": "ai-investment-agent-desktop",
+  "name": "vc-news-agent-ai-web",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["frontend"],
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "frontend:dev": "npm run dev --workspace frontend",
-    "frontend:build": "npm run build --workspace frontend",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.9.5"
+    "frontend:build": "npm run build --workspace frontend"
   }
 }

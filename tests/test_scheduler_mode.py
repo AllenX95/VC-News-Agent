@@ -14,12 +14,13 @@ from ai_agent.config import (
 
 
 class SchedulerModeConfigTests(unittest.TestCase):
-    def test_mode_defaults_to_internal_with_default_source(self) -> None:
+    def test_mode_defaults_to_external_with_default_source(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(DEFAULT_SCHEDULER_MODE, "external")
             self.assertEqual(
                 scheduler_mode_info(),
                 {
-                    "mode": DEFAULT_SCHEDULER_MODE,
+                    "mode": "external",
                     "source": "default",
                     "env_name": SCHEDULER_MODE_ENV_NAME,
                 },

@@ -1,8 +1,8 @@
-# VC News Agent × Codex 定时任务规划方案
+# VC-news-agent-AI × Codex 定时任务规划方案
 
 > 状态：规划稿 v1.0
 > 日期：2026-08-17
-> 适用项目：`D:\claude-projects\VC-news`
+> 适用项目：`VC-news-agent-AI`（项目根目录可位于任意路径）
 
 ## 1. 方案结论
 
@@ -57,7 +57,7 @@
 - 日报固定包含“技术进展、产业新闻、融资新闻”三个一级类目。
 - LLM provider、模型、API Key、Prompt、信息源和并发设置继续通过 GUI 管理。
 - GUI 的“立即抓取、生成摘要、生成报告”等人工入口继续可用。
-- 自动任务不依赖启动 Tauri、浏览器或 FastAPI 服务。
+- 自动任务不依赖启动浏览器、WebUI 或 FastAPI 服务。
 - 每次运行都有可机器检查的状态、产物、日志和退出码。
 - 重复触发不会造成重复抓取、重复日报或并发写库冲突。
 
@@ -384,7 +384,7 @@ VC_NEWS_SCHEDULER_MODE=internal | external | disabled
 - `external`：不启动 APScheduler、不执行 startup catch-up；由 Codex 调度。
 - `disabled`：只保留纯手动执行。
 
-兼容迁移期默认值为 `internal`，避免现有桌面启动行为静默改变。正式 Codex Automation 的任务环境必须显式注入 `VC_NEWS_SCHEDULER_MODE=external`；Headless CLI 本身从不启动 APScheduler，因此该变量主要约束 GUI/FastAPI 进程。GUI 设置页显示“有效模式 + 配置来源（默认值/环境变量）”，避免数据库显示值与进程实际值不一致。
+Browser-first 架构默认值为 `external`，由 Codex Automation 独占调度权；只有不使用外部调度器时才显式切换为 `internal`。Headless CLI 本身从不启动 APScheduler，因此该变量主要约束 WebUI/FastAPI 进程。GUI 设置页显示“有效模式 + 配置来源（默认值/环境变量）”，避免配置显示值与进程实际值不一致。
 
 GUI/API 的手动执行与此开关无关，始终保留。
 
@@ -429,7 +429,7 @@ Codex Automation 直接绑定当前本地项目目录运行，不使用临时 wo
 新增统一环境变量：
 
 ```text
-VC_NEWS_DATA_DIR=D:\VC-News-Agent-Data
+VC_NEWS_DATA_DIR=<可移植的外部运行数据目录>
 ```
 
 并由它派生：
@@ -465,7 +465,7 @@ GUI 与 Headless 的执行入口必须最终调用同一个 orchestration/servic
 建议任务提示词：
 
 ```text
-在项目 D:\claude-projects\VC-news 中执行每日 VC 新闻自动任务。
+在 VC-news-agent-AI 项目根目录中执行每日 VC 新闻自动任务。
 
 1. 不修改源代码，不启动 GUI，不启动 FastAPI。
 2. 先执行 .\.venv\Scripts\python.exe -m ai_agent.headless health。
