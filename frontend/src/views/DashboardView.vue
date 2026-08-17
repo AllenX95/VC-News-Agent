@@ -17,6 +17,43 @@
       </div>
     </section>
 
+    <section class="panel automation-panel">
+      <div class="panel-header">
+        <div>
+          <h3>自动 HTML 日报</h3>
+          <p class="muted">Codex / Headless 最近一次运行状态与日报入口</p>
+        </div>
+        <div class="toolbar">
+          <el-tag v-if="automationStatus" :type="automationTagType(automationStatus.status)">
+            {{ automationStatusLabel(automationStatus.status) }}
+          </el-tag>
+          <el-button
+            v-if="automationStatus?.html_available"
+            type="primary"
+            plain
+            @click="openAutomationReport"
+          >
+            打开 HTML 日报
+          </el-button>
+        </div>
+      </div>
+      <div v-if="automationStatus" class="automation-meta">
+        <span>目标日期：{{ automationStatus.target_date || "-" }}</span>
+        <span v-if="automationStatus.latest_run_id">运行：{{ automationStatus.latest_run_id }}</span>
+        <span v-if="automationStatus.finished_at">完成：{{ automationStatus.finished_at }}</span>
+      </div>
+      <div v-if="automationStatus?.counts && Object.keys(automationStatus.counts).length" class="automation-counts">
+        <el-tag v-for="(value, key) in automationStatus.counts" :key="key" effect="plain">
+          {{ key }}：{{ value }}
+        </el-tag>
+      </div>
+      <p v-if="automationStatus?.warnings?.length" class="automation-warnings muted">
+        注意：{{ automationStatus.warnings.join("；") }}
+      </p>
+      <p v-if="automationStatus?.error" class="automation-error">{{ automationStatus.error }}</p>
+      <p v-if="!automationStatus" class="muted">尚未读取自动日报状态</p>
+    </section>
+
     <div class="metric-grid">
       <div class="metric-card">
         <div class="value">{{ dashboard?.today_contents ?? "-" }}</div>
@@ -155,12 +192,14 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 
-import { api, notifyError } from "../api/client";
+import { api, getAutomationLatestReportUrl, notifyError, openExternalUrl } from "../api/client";
+import type { AutomationStatus } from "../api/types";
 
 const loading = ref(false);
 const crawlLoading = ref(false);
 const weeklyCrawlLoading = ref(false);
 const dashboard = ref<any>(null);
+const automationStatus = ref<AutomationStatus | null>(null);
 const progress = ref<any>({});
 const sourcePages = ref<Record<number, number>>({});
 const weekStatus = ref<WeekStatus | null>(null);
@@ -263,12 +302,14 @@ function dashboardPath() {
 async function load() {
   loading.value = true;
   try {
-    const [payload, weeklyPayload]: any[] = await Promise.all([
+    const [payload, weeklyPayload, automationPayload]: any[] = await Promise.all([
       api.get(dashboardPath()),
       api.get("/crawl/week-status"),
+      api.get<AutomationStatus>(selectedDate.value ? `/automation/status?date=${encodeURIComponent(selectedDate.value)}` : "/automation/status"),
     ]);
     dashboard.value = payload;
     weekStatus.value = weeklyPayload;
+    automationStatus.value = automationPayload;
     selectedDate.value = payload.selected_date || payload.today || selectedDate.value;
     currentDate.value = payload.current_date || weeklyPayload.today || selectedDate.value;
     for (const group of payload.source_groups || []) {
@@ -278,6 +319,33 @@ async function load() {
     notifyError(error);
   } finally {
     loading.value = false;
+  }
+}
+
+function automationStatusLabel(status: string): string {
+  return {
+    running: "运行中",
+    success: "成功",
+    partial: "部分完成",
+    missing: "暂无日报",
+    corrupt: "产物异常",
+    invalid: "日期无效",
+  }[status] || status || "未知";
+}
+
+function automationTagType(status: string): "success" | "warning" | "danger" | "info" {
+  if (status === "success") return "success";
+  if (status === "running" || status === "partial") return "warning";
+  if (status === "corrupt" || status === "invalid") return "danger";
+  return "info";
+}
+
+async function openAutomationReport() {
+  const targetDate = automationStatus.value?.target_date || selectedDate.value;
+  try {
+    await openExternalUrl(getAutomationLatestReportUrl(targetDate));
+  } catch (error) {
+    notifyError(error);
   }
 }
 
@@ -399,6 +467,33 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.automation-panel {
+  border-left: 4px solid #2563eb;
+}
+
+.automation-meta,
+.automation-counts {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.automation-meta {
+  color: #475569;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.automation-warnings {
+  margin: 12px 0 0;
+}
+
+.automation-error {
+  color: #b91c1c;
+  margin: 12px 0 0;
+}
+
 .date-navigation-panel {
   padding: 12px 18px;
 }

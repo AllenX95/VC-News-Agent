@@ -16,6 +16,52 @@
 http://127.0.0.1:8011/
 ```
 
+## Headless 自动执行
+
+无需启动 GUI、浏览器或 FastAPI 即可执行健康检查和同步日报任务：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_agent.headless health
+.\.venv\Scripts\python.exe -m ai_agent.headless daily
+```
+
+补跑或只基于数据库重新生成报告：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_agent.headless daily --date 2026-08-17 --skip-crawl
+.\.venv\Scripts\python.exe -m ai_agent.headless daily --date 2026-08-17 --force
+```
+
+CLI 的 stdout 最后一行是机器可读 JSON，包含状态、退出码和本次 manifest 路径。每次运行会在 `data/runs/<日期>/<run-id>/` 下保存：
+
+- `run_manifest.json`
+- `report_data.json`
+- `daily.html`
+- `daily.md`
+- `run.log`
+
+日报 HTML 固定包含“技术进展、产业新闻、融资新闻”三个一级类目。
+
+GUI 的 LLM / Prompt 页面会显示“每日投资日报增强”任务。为该任务选择 provider、模型和 Prompt 后，Headless 会在确定性报告基础上调用模型增强 executive summary、条目摘要、投资意义和主题分类。原始 URL、来源和内容/事件 ID 始终由程序保留；未配置或模型失败时自动交付确定性降级版。
+
+Dashboard 与报告工作区会显示最新自动运行状态、计数、告警和 HTML 日报入口。Headless 或 GUI 后台抓取持有共享运行锁时，冲突的 GUI 写请求返回 HTTP 423，状态和其他只读页面仍可访问。
+
+### 调度模式
+
+桌面应用兼容保留内部 APScheduler，默认模式为 `internal`。使用 Codex 或其他外部调度器时，应显式设置：
+
+```powershell
+$env:VC_NEWS_SCHEDULER_MODE='external'
+```
+
+支持的值：
+
+- `internal`：启动内部调度器与启动补抓；
+- `external`：不启动内部调度器，不执行启动补抓；
+- `disabled`：仅保留人工执行。
+
+Headless CLI 本身永远不会启动 APScheduler。
+
 ## 数据
 
 - SQLite 数据库：`data/ai_market_daily_main.sqlite3`

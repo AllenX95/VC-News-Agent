@@ -22,6 +22,13 @@ TZ = ZoneInfo(TIMEZONE_NAME)
 SQLITE_JOURNAL_MODE = os.environ.get("VC_NEWS_SQLITE_JOURNAL_MODE", "OFF").upper()
 PROXY_MODE = os.environ.get("VC_NEWS_PROXY_MODE", "off").strip().lower()
 
+# The desktop application historically owned scheduling.  Keep that behavior
+# as the migration-safe default, while allowing an external runner (for
+# example Codex Automation) to become the sole scheduler explicitly.
+SCHEDULER_MODE_ENV_NAME = "VC_NEWS_SCHEDULER_MODE"
+DEFAULT_SCHEDULER_MODE = "internal"
+VALID_SCHEDULER_MODES = frozenset({"internal", "external", "disabled"})
+
 DEFAULT_CRAWL_TIME = "10:00"
 DEFAULT_CACHE_HOURS = 48
 
@@ -125,6 +132,66 @@ def normalize_proxy_mode(value: str | None) -> str:
         "manual": "custom",
     }
     return aliases.get(mode, mode)
+
+
+def normalize_scheduler_mode(value: str | None) -> str:
+    """Return the canonical scheduler mode spelling.
+
+    Empty values retain the compatibility default.  Unknown non-empty values
+    are returned unchanged so callers can use :func:`validate_scheduler_mode`
+    when they need strict validation instead of silently changing behavior.
+    """
+
+    mode = (value or DEFAULT_SCHEDULER_MODE).strip().lower()
+    aliases = {
+        "in-process": "internal",
+        "in_process": "internal",
+        "inprocess": "internal",
+        "external-runner": "external",
+        "external_runner": "external",
+        "off": "disabled",
+        "disable": "disabled",
+    }
+    return aliases.get(mode, mode)
+
+
+def validate_scheduler_mode(value: str | None) -> str:
+    """Normalize and strictly validate a scheduler mode.
+
+    A bad environment value should fail fast rather than accidentally starting
+    both an internal and external scheduler.  The exception includes the
+    accepted values so CLI/startup diagnostics remain actionable.
+    """
+
+    mode = normalize_scheduler_mode(value)
+    if mode not in VALID_SCHEDULER_MODES:
+        allowed = ", ".join(sorted(VALID_SCHEDULER_MODES))
+        raise ValueError(f"invalid scheduler mode {value!r}; expected one of: {allowed}")
+    return mode
+
+
+def scheduler_mode_info(value: str | None = None) -> dict[str, str]:
+    """Return the effective scheduler mode and where it came from.
+
+    ``value`` is primarily useful to callers/tests that already have a value.
+    When omitted, the process environment is consulted dynamically instead of
+    relying on a module-import snapshot.  This keeps app startup behavior
+    correct when a host injects ``VC_NEWS_SCHEDULER_MODE`` at launch time.
+    """
+
+    if value is None:
+        raw_value = os.environ.get(SCHEDULER_MODE_ENV_NAME)
+        source = "environment" if raw_value is not None and raw_value.strip() else "default"
+    else:
+        raw_value = value
+        source = "argument"
+
+    mode = validate_scheduler_mode(raw_value)
+    return {
+        "mode": mode,
+        "source": source,
+        "env_name": SCHEDULER_MODE_ENV_NAME,
+    }
 
 
 def apply_network_proxy_settings(

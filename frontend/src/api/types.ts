@@ -147,3 +147,39 @@ export type Report = {
   versions: ReportVersion[];
   markdown_text?: string;
 };
+
+export type AutomationRunStatus = "running" | "success" | "partial" | "missing" | "corrupt" | "invalid" | string;
+
+export type AutomationStatus = {
+  status: AutomationRunStatus;
+  target_date: string;
+  running: boolean;
+  lock: {
+    present: boolean;
+    status: string;
+    run_id?: string | null;
+    pid?: number | null;
+    started_at?: string | null;
+    error?: string;
+  };
+  latest: {
+    status: AutomationRunStatus;
+    target_date: string;
+    run_id: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+    stages: Record<string, string>;
+    counts: Record<string, number>;
+    warnings: string[];
+    error: string | null;
+  } | null;
+  latest_status: AutomationRunStatus | null;
+  latest_run_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string | null;
+  counts: Record<string, number>;
+  warnings: string[];
+  html_available: boolean;
+  error: string | null;
+};

@@ -1,5 +1,41 @@
 <template>
   <section class="page-grid" v-loading="loading">
+    <section class="panel automation-report-card">
+      <div class="panel-header">
+        <div>
+          <h2>最新自动日报</h2>
+          <p class="muted">Headless / Codex 生成的自包含 HTML 日报</p>
+        </div>
+        <div class="toolbar">
+          <el-tag v-if="automationStatus" :type="automationTagType(automationStatus.status)">
+            {{ automationStatusLabel(automationStatus.status) }}
+          </el-tag>
+          <el-button
+            v-if="automationStatus?.html_available"
+            type="primary"
+            @click="openAutomationReport"
+          >
+            打开 HTML 日报
+          </el-button>
+        </div>
+      </div>
+      <div v-if="automationStatus" class="automation-report-meta">
+        <span>目标日期：{{ automationStatus.target_date || "-" }}</span>
+        <span v-if="automationStatus.latest_run_id">运行：{{ automationStatus.latest_run_id }}</span>
+        <span v-if="automationStatus.finished_at">完成：{{ automationStatus.finished_at }}</span>
+      </div>
+      <div v-if="automationStatus?.counts && Object.keys(automationStatus.counts).length" class="automation-report-counts">
+        <el-tag v-for="(value, key) in automationStatus.counts" :key="key" effect="plain">
+          {{ key }}：{{ value }}
+        </el-tag>
+      </div>
+      <p v-if="automationStatus?.warnings?.length" class="muted automation-report-warnings">
+        注意：{{ automationStatus.warnings.join("；") }}
+      </p>
+      <p v-if="automationStatus?.error" class="automation-report-error">{{ automationStatus.error }}</p>
+      <p v-if="!automationStatus" class="muted">尚未读取自动日报状态</p>
+    </section>
+
     <section class="panel">
       <div class="panel-header">
         <div><h2>报告工作区</h2><p class="muted">先预览输入，再生成草稿；每次生成或编辑都会保留独立版本。</p></div>
@@ -85,8 +121,8 @@
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 
-import { api, notifyError } from "../api/client";
-import type { Report, ReportVersion } from "../api/types";
+import { api, getAutomationLatestReportUrl, notifyError, openExternalUrl } from "../api/client";
+import type { AutomationStatus, Report, ReportVersion } from "../api/types";
 
 type ReportInput = { target_type: string; target_id: number; title?: string; summary?: string; snapshot?: Record<string, any> };
 
@@ -95,6 +131,7 @@ const previewLoading = ref(false);
 const generating = ref(false);
 const regenerating = ref(false);
 const reports = ref<Report[]>([]);
+const automationStatus = ref<AutomationStatus | null>(null);
 const selectedReport = ref<Report | null>(null);
 const markdownText = ref("");
 const previewInputs = ref<ReportInput[]>([]);
@@ -120,6 +157,41 @@ async function loadReports() {
     notifyError(error);
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadAutomationStatus() {
+  try {
+    automationStatus.value = await api.get<AutomationStatus>("/automation/status");
+  } catch (error) {
+    notifyError(error);
+  }
+}
+
+function automationStatusLabel(status: string): string {
+  return {
+    running: "运行中",
+    success: "成功",
+    partial: "部分完成",
+    missing: "暂无日报",
+    corrupt: "产物异常",
+    invalid: "日期无效",
+  }[status] || status || "未知";
+}
+
+function automationTagType(status: string): "success" | "warning" | "danger" | "info" {
+  if (status === "success") return "success";
+  if (status === "running" || status === "partial") return "warning";
+  if (status === "corrupt" || status === "invalid") return "danger";
+  return "info";
+}
+
+async function openAutomationReport() {
+  const targetDate = automationStatus.value?.target_date;
+  try {
+    await openExternalUrl(getAutomationLatestReportUrl(targetDate));
+  } catch (error) {
+    notifyError(error);
   }
 }
 
@@ -235,12 +307,39 @@ async function exportReport() {
 }
 
 onMounted(async () => {
-  await loadReports();
+  await Promise.all([loadReports(), loadAutomationStatus()]);
   if (reports.value.length) await openReport(reports.value[0].report_id);
 });
 </script>
 
 <style scoped>
+.automation-report-card {
+  border-left: 4px solid #2563eb;
+}
+
+.automation-report-meta,
+.automation-report-counts {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.automation-report-meta {
+  color: #475569;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.automation-report-warnings {
+  margin: 12px 0 0;
+}
+
+.automation-report-error {
+  color: #b91c1c;
+  margin: 12px 0 0;
+}
+
 .report-form { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .input-list { display: grid; gap: 10px; }
 .input-list :deep(.el-checkbox) { align-items: flex-start; display: flex; height: auto; white-space: normal; }
