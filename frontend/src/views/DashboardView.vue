@@ -34,7 +34,26 @@
         <div class="value">{{ dashboard?.failed_sources ?? "-" }}</div>
         <div class="label">有失败记录的源</div>
       </div>
+      <div class="metric-card">
+        <div class="value">{{ dashboard?.watchlist_due?.count ?? 0 }}</div>
+        <div class="label">今日待跟进</div>
+      </div>
     </div>
+
+    <section v-if="dashboard?.watchlist_due?.items?.length" class="panel">
+      <div class="panel-header">
+        <div><h3>今日待跟进</h3><p class="muted">关注列表中已到回看日期的事项</p></div>
+        <RouterLink to="/watchlist"><el-button link>查看全部</el-button></RouterLink>
+      </div>
+      <el-table :data="dashboard.watchlist_due.items" stripe>
+        <el-table-column label="对象" min-width="300">
+          <template #default="{ row }"><RouterLink class="item-title" :to="row.target_type === 'content' ? `/content/${row.target_id}` : '/watchlist'">{{ row.target_title_snapshot }}</RouterLink></template>
+        </el-table-column>
+        <el-table-column prop="priority" label="优先级" width="100" />
+        <el-table-column prop="next_review_date" label="回看日期" width="140" />
+        <el-table-column prop="status" label="状态" width="120" />
+      </el-table>
+    </section>
 
     <section class="panel">
       <div class="panel-header">

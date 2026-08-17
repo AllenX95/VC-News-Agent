@@ -440,6 +440,7 @@ class CrawlProgress:
             "current_source": "",
             "completed_sources": 0,
             "total_sources": 0,
+            "failed_sources": 0,
             "new_items": 0,
             "failed_items": 0,
             "started_at": "",
@@ -457,6 +458,7 @@ class CrawlProgress:
                     "current_source": "",
                     "completed_sources": 0,
                     "total_sources": total_sources,
+                    "failed_sources": 0,
                     "new_items": 0,
                     "failed_items": 0,
                     "started_at": started_at.isoformat(timespec="seconds"),
@@ -474,6 +476,8 @@ class CrawlProgress:
             self._state["completed_sources"] += 1
             self._state["new_items"] += new_items
             self._state["failed_items"] += failed_items
+            if not ok:
+                self._state["failed_sources"] += 1
             self._state["current_source"] = source_name
             self._state["message"] = f"{source_name} 完成，新增 {new_items} 条" if ok else f"{source_name} 抓取失败"
 
@@ -1410,6 +1414,8 @@ class CrawlService:
             return self.fetch_svtr(source, run_timestamp=run_timestamp)
         if "jazzyear.com" in source_host or "甲子光年" in source.source_name:
             return self.fetch_jazzyear(source, run_timestamp=run_timestamp)
+        if "elsewhere.news" in source_host or "elsewhere news" in source_name:
+            return self.fetch_elsewhere_news(source, run_timestamp=run_timestamp)
         if "a16z.com" in source_host or source_name == "a16z ai":
             return self.fetch_a16z_ai(source, run_timestamp=run_timestamp)
         if "techcrunch.com" in source_host:
@@ -2083,6 +2089,88 @@ class CrawlService:
                     metadata={"source_page": source.source_url},
                 )
             )
+            if len(items) >= source.item_limit_per_run:
+                break
+        return items
+
+    def fetch_elsewhere_news(self, source: Source, run_timestamp: datetime | None = None) -> list[ExtractedItem]:
+        """Fetch Elsewhere's server-rendered Chinese article cards and details."""
+        html = self._get_html(source.source_url, source.timeout_seconds)
+        soup = BeautifulSoup(html, "html.parser")
+        links: list[tuple[str, str, datetime | None, str]] = []
+        seen: set[str] = set()
+        excluded_paths = {
+            "/zh",
+            "/zh/articles",
+            "/zh/podcasts",
+            "/zh/brands",
+            "/zh/about",
+        }
+        for heading in soup.find_all("h3"):
+            anchor = heading.find_parent("a", href=True)
+            if not anchor:
+                continue
+            url = canonicalize_url(anchor["href"], source.source_url)
+            parsed = urlparse(url)
+            path = parsed.path.rstrip("/") or "/"
+            if parsed.netloc.lower() not in {"elsewhere.news", "www.elsewhere.news"}:
+                continue
+            if not path.startswith("/zh/") or path in excluded_paths or url in seen:
+                continue
+            title = clean_text(heading.get_text(" "))
+            if not title:
+                continue
+            time_node = anchor.find("time")
+            list_date, list_date_status = self._date_from_text(
+                clean_text(time_node.get_text(" ")) if time_node else ""
+            )
+            seen.add(url)
+            links.append((title, url, list_date, list_date_status))
+            if len(links) >= source.list_page_limit:
+                break
+
+        if not links:
+            return []
+
+        target_timestamp = run_timestamp or db_now()
+        items: list[ExtractedItem] = []
+        older_streak = 0
+        for title_hint, url, list_date, list_date_status in links:
+            try:
+                detail_html = self._get_html(url, source.timeout_seconds)
+                item = self._extract_detail(detail_html, url, fallback_title=title_hint)
+                if not item:
+                    continue
+                if list_date and not item.publish_time:
+                    item.publish_time = list_date
+                    item.publish_time_status = list_date_status
+            except Exception:
+                fallback_date = list_date or self._date_from_url(url)
+                item = ExtractedItem(
+                    title=first_chars(title_hint, 180),
+                    url=url,
+                    summary=summary_chars(title_hint),
+                    publish_time=fallback_date,
+                    publish_time_status=(
+                        list_date_status
+                        if list_date
+                        else ("estimated" if fallback_date else "missing")
+                    ),
+                )
+
+            if self._is_item_before_target_day(item, target_timestamp):
+                if self._is_item_in_source_window(source, item, target_timestamp):
+                    older_streak = 0
+                    items.append(item)
+                    continue
+                older_streak += 1
+                if older_streak >= OLDER_ARTICLE_STOP_STREAK:
+                    break
+                continue
+            if not self._is_item_in_source_window(source, item, target_timestamp):
+                continue
+            older_streak = 0
+            items.append(item)
             if len(items) >= source.item_limit_per_run:
                 break
         return items

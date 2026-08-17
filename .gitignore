@@ -8,6 +8,7 @@ data/*.sqlite3-*
 data/secret.key
 backups/*.sqlite3
 archives/*
+*_SPEC.md
 node_modules/
 frontend/node_modules/
 frontend/dist/

@@ -186,6 +186,51 @@ class SourceFetcherTests(unittest.TestCase):
         self.assertEqual([item.title for item in items], ["Current AI Post", "Previous AI Post"])
         self.assertNotIn("Unrelated global recommendation", [item.title for item in items])
 
+    def test_elsewhere_uses_article_cards_and_filters_to_target_day(self) -> None:
+        source = Source(
+            source_name="Elsewhere News 中文",
+            source_category="venture_media",
+            source_url="https://elsewhere.news/zh/articles",
+            list_page_limit=20,
+            item_limit_per_run=10,
+            timeout_seconds=20,
+        )
+        home = """
+            <html><body>
+              <nav><a href="/zh/articles">文章</a></nav>
+              <a class="group" href="/zh/author-1/current">
+                <div><h3>当前融资文章</h3><p>当前文章摘要</p><time>2026年6月15日</time></div>
+              </a>
+              <a class="group" href="/zh/author-1/older">
+                <div><h3>前一日文章</h3><p>前一日文章摘要</p><time>2026年6月14日</time></div>
+              </a>
+            </body></html>
+        """
+        detail = """
+            <html><head>
+              <meta property="og:title" content="当前融资文章">
+              <meta name="description" content="当前文章摘要">
+            </head><body><article>
+              <h1>当前融资文章</h1>
+              <time>2026年6月15日</time>
+              <p>这是 Elsewhere 详情页正文，包含足够长的内容以验证正文解析和日期过滤逻辑。</p>
+            </article></body></html>
+        """
+        older_detail = detail.replace("当前融资文章", "前一日文章").replace("2026年6月15日", "2026年6月14日")
+        pages = {
+            source.source_url: home,
+            "https://elsewhere.news/zh/author-1/current": detail,
+            "https://elsewhere.news/zh/author-1/older": older_detail,
+        }
+        service = CrawlService()
+        service._get_html = lambda url, timeout: pages[url]
+
+        items = service.fetch_elsewhere_news(source, run_timestamp=datetime(2026, 6, 15, 10, 0))
+
+        self.assertEqual([item.title for item in items], ["当前融资文章"])
+        self.assertEqual(items[0].publish_time, datetime(2026, 6, 15))
+        self.assertNotIn("文章", [item.title for item in items])
+
 
 if __name__ == "__main__":
     unittest.main()

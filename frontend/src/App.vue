@@ -71,6 +71,7 @@ import {
   Document,
   Files,
   HomeFilled,
+  List,
   Money,
   Setting,
   SwitchButton,
@@ -87,6 +88,10 @@ const shuttingDown = ref(false);
 
 const navItems = [
   { path: "/", label: "今日概览", icon: HomeFilled },
+  { path: "/intelligence", label: "情报收件箱", icon: List },
+  { path: "/financing-events", label: "融资事件", icon: Money },
+  { path: "/watchlist", label: "关注列表", icon: Tickets },
+  { path: "/reports", label: "报告工作区", icon: Document },
   { path: "/financing", label: "融资新闻", icon: Money },
   { path: "/sources", label: "信息源", icon: Connection },
   { path: "/content", label: "内容库", icon: Files },

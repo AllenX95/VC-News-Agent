@@ -1,6 +1,10 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 
 import DashboardView from "./views/DashboardView.vue";
+import IntelligenceView from "./views/IntelligenceView.vue";
+import FinancingEventsView from "./views/FinancingEventsView.vue";
+import WatchlistView from "./views/WatchlistView.vue";
+import ReportsView from "./views/ReportsView.vue";
 import FinancingView from "./views/FinancingView.vue";
 import SourcesView from "./views/SourcesView.vue";
 import ContentView from "./views/ContentView.vue";
@@ -15,6 +19,10 @@ export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: "/", component: DashboardView, meta: { title: "今日概览" } },
+    { path: "/intelligence", component: IntelligenceView, meta: { title: "情报收件箱" } },
+    { path: "/financing-events", component: FinancingEventsView, meta: { title: "融资事件" } },
+    { path: "/watchlist", component: WatchlistView, meta: { title: "关注列表" } },
+    { path: "/reports", component: ReportsView, meta: { title: "报告工作区" } },
     { path: "/financing", component: FinancingView, meta: { title: "融资新闻" } },
     { path: "/sources", component: SourcesView, meta: { title: "信息源管理" } },
     { path: "/content", component: ContentView, meta: { title: "内容库" } },

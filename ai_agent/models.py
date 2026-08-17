@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -90,6 +90,12 @@ class ContentItem(Base):
     extraction_status: Mapped[str] = mapped_column(String(40), default="new")
     llm_status: Mapped[str] = mapped_column(String(40), default="not_configured")
     ai_related: Mapped[bool | None] = mapped_column(Boolean)
+    relevance_score: Mapped[int | None] = mapped_column(Integer)
+    relevance_confidence: Mapped[float | None] = mapped_column(Float)
+    relevance_reasons_json: Mapped[str | None] = mapped_column(Text)
+    review_status: Mapped[str] = mapped_column(String(40), default="unread")
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     full_content_cached: Mapped[bool] = mapped_column(Boolean, default=False)
     content_cache_until: Mapped[datetime | None] = mapped_column(DateTime)
     full_content_saved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -103,6 +109,7 @@ class ContentItem(Base):
     cache: Mapped["ContentCache | None"] = relationship(back_populates="content", cascade="all, delete-orphan")
     tags: Mapped[list["ContentTag"]] = relationship(back_populates="content", cascade="all, delete-orphan")
     entities: Mapped[list["ContentEntity"]] = relationship(back_populates="content", cascade="all, delete-orphan")
+    reviews: Mapped[list["IntelligenceReview"]] = relationship(back_populates="content", cascade="all, delete-orphan")
 
 
 class ContentCache(Base):
@@ -170,6 +177,35 @@ class ContentEntity(Base):
 
     content: Mapped[ContentItem] = relationship(back_populates="entities")
     entity: Mapped[Entity] = relationship()
+
+
+class IntelligenceReview(Base):
+    __tablename__ = "intelligence_reviews"
+
+    review_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content_id: Mapped[int] = mapped_column(ForeignKey("content_items.content_id"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(40), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    previous_status: Mapped[str | None] = mapped_column(String(40))
+    previous_score: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    content: Mapped[ContentItem] = relationship(back_populates="reviews")
+
+
+class CrawlJob(Base):
+    __tablename__ = "crawl_jobs"
+
+    job_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(40), default="manual")
+    status: Mapped[str] = mapped_column(String(40), default="queued")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    total_sources: Mapped[int] = mapped_column(Integer, default=0)
+    succeeded_sources: Mapped[int] = mapped_column(Integer, default=0)
+    failed_sources: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class LLMConfig(Base):
@@ -284,4 +320,155 @@ class SessionLog(Base):
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FinancingEvent(Base):
+    __tablename__ = "financing_events"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(40), default="financing")
+    event_title: Mapped[str] = mapped_column(Text, nullable=False)
+    company_name: Mapped[str] = mapped_column(Text, nullable=False)
+    company_name_normalized: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
+    announced_date: Mapped[date | None] = mapped_column(Date)
+    financing_round: Mapped[str | None] = mapped_column(String(80))
+    amount_original: Mapped[str | None] = mapped_column(Text)
+    amount_normalized: Mapped[float | None] = mapped_column(Float)
+    currency: Mapped[str | None] = mapped_column(String(20))
+    investors_json: Mapped[str | None] = mapped_column(Text)
+    lead_investors_json: Mapped[str | None] = mapped_column(Text)
+    event_summary: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    review_status: Mapped[str] = mapped_column(String(30), default="pending")
+    locked_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    contents: Mapped[list["EventContent"]] = relationship(
+        back_populates="event", cascade="all, delete-orphan"
+    )
+    change_logs: Mapped[list["EventChangeLog"]] = relationship(
+        back_populates="event", cascade="all, delete-orphan"
+    )
+
+
+class EventContent(Base):
+    __tablename__ = "event_contents"
+    __table_args__ = (
+        UniqueConstraint("event_id", "content_id", name="uq_event_content"),
+        UniqueConstraint("content_id", name="uq_event_content_single"),
+    )
+
+    event_content_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("financing_events.event_id"), nullable=False, index=True)
+    content_id: Mapped[int] = mapped_column(ForeignKey("content_items.content_id"), nullable=False, index=True)
+    is_primary_source: Mapped[bool] = mapped_column(Boolean, default=False)
+    match_score: Mapped[float] = mapped_column(Float, default=0.0)
+    match_reasons_json: Mapped[str | None] = mapped_column(Text)
+    association_source: Mapped[str] = mapped_column(String(30), default="automatic")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    event: Mapped[FinancingEvent] = relationship(back_populates="contents")
+    content: Mapped[ContentItem] = relationship()
+
+
+class EventChangeLog(Base):
+    __tablename__ = "event_change_logs"
+
+    change_log_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("financing_events.event_id"), index=True)
+    operation: Mapped[str] = mapped_column(String(40), nullable=False)
+    before_json: Mapped[str | None] = mapped_column(Text)
+    after_json: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    event: Mapped[FinancingEvent | None] = relationship(back_populates="change_logs")
+
+
+class WatchItem(Base):
+    __tablename__ = "watch_items"
+    __table_args__ = (UniqueConstraint("active_target_key", name="uq_watch_active_target"),)
+
+    watch_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    active_target_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    target_title_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    target_summary_snapshot: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(20), default="medium")
+    status: Mapped[str] = mapped_column(String(20), default="watching")
+    reason: Mapped[str | None] = mapped_column(Text)
+    next_review_date: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    report_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    latest_version_number: Mapped[int] = mapped_column(Integer, default=0)
+    last_generation_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    inputs: Mapped[list["ReportInput"]] = relationship(back_populates="report", cascade="all, delete-orphan")
+    versions: Mapped[list["ReportVersion"]] = relationship(back_populates="report", cascade="all, delete-orphan")
+    exports: Mapped[list["ReportExport"]] = relationship(back_populates="report", cascade="all, delete-orphan")
+
+
+class ReportInput(Base):
+    __tablename__ = "report_inputs"
+
+    report_input_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.report_id"), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+    included: Mapped[bool] = mapped_column(Boolean, default=True)
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    report: Mapped[Report] = relationship(back_populates="inputs")
+
+
+class ReportVersion(Base):
+    __tablename__ = "report_versions"
+    __table_args__ = (UniqueConstraint("report_id", "version_number", name="uq_report_version"),)
+
+    report_version_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.report_id"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    template_version: Mapped[str] = mapped_column(String(40), default="v0.3")
+    prompt_id: Mapped[int | None] = mapped_column(Integer)
+    model_name: Mapped[str | None] = mapped_column(String(200))
+    input_snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
+    markdown_text: Mapped[str] = mapped_column(Text, default="")
+    generation_status: Mapped[str] = mapped_column(String(30), default="success")
+    generation_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    report: Mapped[Report] = relationship(back_populates="versions")
+
+
+class ReportExport(Base):
+    __tablename__ = "report_exports"
+
+    report_export_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.report_id"), nullable=False, index=True)
+    report_version_id: Mapped[int] = mapped_column(ForeignKey("report_versions.report_version_id"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    exported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    report: Mapped[Report] = relationship(back_populates="exports")
 

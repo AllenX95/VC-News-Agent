@@ -367,6 +367,7 @@ SOURCES = [
     ("医药魔方 ByDrug", "venture_media", "https://bydrug.pharmcube.com/", "http", False, "low"),
     ("SVTR AI创投日报", "venture_media", "https://svtr.ai/", "http", False, "low"),
     ("甲子光年", "venture_media", "https://www.jazzyear.com/", "http", False, "low"),
+    ("Elsewhere News 中文", "venture_media", "https://elsewhere.news/zh/articles", "http", False, "low"),
     ("a16z AI", "venture_media", "https://a16z.com/ai/", "http", False, "low"),
     ("量子位", "ai_media", "https://www.qbitai.com/", "http", False, "low"),
     ("晚点 LatePost", "tech_business_media", "https://www.latepost.com/", "http", False, "medium"),

@@ -48,17 +48,24 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def ensure_schema_migrations() -> None:
-    with engine.begin() as connection:
-        llm_config_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(llm_configs)")}
-        if "context_window_tokens" not in llm_config_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE llm_configs "
-                "ADD COLUMN context_window_tokens INTEGER NOT NULL DEFAULT 1000000"
-            )
+    from .migrations import apply_migrations
+
+    apply_migrations(engine)
 
 
 def create_db() -> None:
     from . import models  # noqa: F401
+
+    from .migrations import migration_pending
+
+    if DB_PATH.exists() and migration_pending(engine):
+        from sqlalchemy import inspect
+
+        if inspect(engine).has_table("backups"):
+            from .services import BackupService
+
+            with SessionLocal() as db:
+                BackupService().create_backup(db, "v03_upgrade")
 
     Base.metadata.create_all(bind=engine)
     ensure_schema_migrations()
