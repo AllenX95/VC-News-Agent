@@ -2,13 +2,12 @@ import { ElMessage } from "element-plus";
 
 export type BackendLaunchResult = {
   ok: boolean;
-  port?: number;
   base_url?: string;
-  owned?: boolean;
   message?: string;
 };
 
-const fallbackBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8011";
+const fallbackBaseUrl =
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "http://127.0.0.1:8011" : window.location.origin);
 let apiBaseUrl = fallbackBaseUrl;
 
 export function getApiBaseUrl() {
@@ -27,61 +26,34 @@ export function getAutomationLatestReportUrl(targetDate?: string | null) {
 }
 
 export async function ensureBackend(): Promise<BackendLaunchResult> {
-  if (window.__TAURI_INTERNALS__) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const result = (await invoke("ensure_backend")) as BackendLaunchResult;
-      if (result?.base_url) {
-        setApiBaseUrl(result.base_url);
-      }
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { ok: false, base_url: apiBaseUrl, message };
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/v1/app-info`);
+    if (!response.ok) {
+      return { ok: false, base_url: apiBaseUrl, message: `后端健康检查失败：HTTP ${response.status}` };
     }
+    const payload = await response.json();
+    const ok = payload?.app_id === "ai-investment-agent";
+    return {
+      ok,
+      base_url: apiBaseUrl,
+      message: ok ? "Web 后端已连接" : "当前端口不是 VC-news-agent-AI 后端",
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, base_url: apiBaseUrl, message };
   }
-
-  return { ok: true, base_url: apiBaseUrl, owned: false, message: "browser dev mode" };
 }
 
 export async function stopBackend() {
-  try {
-    await fetch(`${apiBaseUrl}/shutdown`, { method: "POST" });
-  } catch (error) {
-    console.warn("backend shutdown request failed", error);
-  }
-
-  if (!window.__TAURI_INTERNALS__) return;
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("stop_backend");
-}
-
-export async function exitApplication() {
-  if (!window.__TAURI_INTERNALS__) {
-    window.close();
-    return window.closed;
-  }
-
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
-    return true;
-  } catch (error) {
-    console.warn("application close request failed", error);
-    window.close();
-    return window.closed;
+  const response = await fetch(`${apiBaseUrl}/shutdown`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`关闭后端失败：HTTP ${response.status}`);
   }
 }
 
 export async function openExternalUrl(url: string) {
   if (!url) {
     throw new Error("缺少原文链接");
-  }
-
-  if (window.__TAURI_INTERNALS__) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("open_external_url", { url });
-    return;
   }
 
   window.open(url, "_blank", "noopener,noreferrer");

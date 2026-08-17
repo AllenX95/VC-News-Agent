@@ -1,4 +1,4 @@
-# PRD 03：VC-news-agent 侧改动建议
+# PRD 03：VC-news-agent-AI 侧改动建议
 
 > 状态：Ready for implementation
 > 版本：1.0
@@ -7,7 +7,7 @@
 
 ## Problem Statement
 
-VC News Agent 当前以 GUI/FastAPI 为主要入口，应用启动时会启用内部 APScheduler，并可能执行启动补抓。虽然抓取、LLM、日报和报告服务已经存在，但尚无适合 Codex 无人值守调用的同步 Headless 入口，也没有标准运行锁、manifest、退出码、结构化三类日报数据和确定性 HTML 渲染链路。
+VC-news-agent-AI 当前以 GUI/FastAPI 为主要入口，应用启动时会启用内部 APScheduler，并可能执行启动补抓。虽然抓取、LLM、日报和报告服务已经存在，但尚无适合 Codex 无人值守调用的同步 Headless 入口，也没有标准运行锁、manifest、退出码、结构化三类日报数据和确定性 HTML 渲染链路。
 
 当前日报按信息源类别组织，不等同于用户需要的技术进展、产业新闻、融资新闻三类投资情报。现有 LLM 配置已经支持 GUI 管理 provider、模型和 Prompt，但如果新增 Headless 时绕过现有任务绑定，或在 API route 中复制流水线，会破坏配置一致性。runtime data 目前与代码目录耦合，且 SQLite 使用特殊 journal mode，需要谨慎处理并发、补跑和历史产物。
 
@@ -101,7 +101,7 @@ VC News Agent 当前以 GUI/FastAPI 为主要入口，应用启动时会启用�
 
 ## Out of Scope
 
-- 不由 VC News Agent 创建或管理 Codex Automation。
+- 不由 VC-news-agent-AI 创建或管理 Codex Automation。
 - 不在应用内实现第二套 cron 作为 Codex 的备份调度器。
 - 不新增独立 CLI provider、模型、API Key 或 Prompt 参数。
 - 不将 API route 作为 Headless 内部调用接口。

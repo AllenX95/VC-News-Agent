@@ -22,11 +22,10 @@ TZ = ZoneInfo(TIMEZONE_NAME)
 SQLITE_JOURNAL_MODE = os.environ.get("VC_NEWS_SQLITE_JOURNAL_MODE", "OFF").upper()
 PROXY_MODE = os.environ.get("VC_NEWS_PROXY_MODE", "off").strip().lower()
 
-# The desktop application historically owned scheduling.  Keep that behavior
-# as the migration-safe default, while allowing an external runner (for
-# example Codex Automation) to become the sole scheduler explicitly.
+# Codex Automation is the default scheduling owner. WebUI processes stay
+# interactive-only unless an operator explicitly opts into internal scheduling.
 SCHEDULER_MODE_ENV_NAME = "VC_NEWS_SCHEDULER_MODE"
-DEFAULT_SCHEDULER_MODE = "internal"
+DEFAULT_SCHEDULER_MODE = "external"
 VALID_SCHEDULER_MODES = frozenset({"internal", "external", "disabled"})
 
 DEFAULT_CRAWL_TIME = "10:00"

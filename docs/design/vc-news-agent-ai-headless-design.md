@@ -1,8 +1,8 @@
-# VC News Agent Headless 改动设计
+# VC-news-agent-AI Headless 改动设计
 
 > 状态：Implementation design
 > 日期：2026-08-17
-> 上游：整体架构设计 PRD、VC-news-agent 侧改动建议 PRD
+> 上游：整体架构设计 PRD、VC-news-agent-AI 侧改动建议 PRD
 
 ## 1. 设计结论
 

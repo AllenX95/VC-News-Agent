@@ -1,4 +1,4 @@
-"""Synchronous command line adapter for the VC News Agent.
+"""Synchronous command line adapter for VC-news-agent-AI.
 
 The CLI intentionally contains no business orchestration.  It translates command
 line controls to ``DailyRunOptions`` and emits one machine-readable JSON object
@@ -23,7 +23,7 @@ from .orchestration import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m ai_agent.headless", description="VC News Agent headless runner")
+    parser = argparse.ArgumentParser(prog="python -m ai_agent.headless", description="VC-news-agent-AI headless runner")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("health", help="check local runtime prerequisites")

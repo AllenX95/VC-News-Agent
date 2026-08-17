@@ -5,7 +5,6 @@ export const useBackendStore = defineStore("backend", {
   state: () => ({
     ready: false,
     loading: false,
-    owned: false,
     baseUrl: getApiBaseUrl(),
     message: "",
     error: "",
@@ -17,7 +16,6 @@ export const useBackendStore = defineStore("backend", {
       try {
         const result = await ensureBackend();
         this.ready = !!result.ok;
-        this.owned = !!result.owned;
         this.baseUrl = result.base_url || getApiBaseUrl();
         this.message = result.message || "";
         if (!result.ok) {

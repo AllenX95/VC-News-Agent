@@ -1,12 +1,22 @@
-# AI 投资情报 Agent
+# VC-news-agent-AI
 
-本地个人版 AI 投资情报信息收集与整理工具。开发依据见：
+本地个人版 AI 投资情报信息收集与整理工具。仓库和项目目录的规范名称均为 `VC-news-agent-AI`。开发依据见：
 
 - `ai市场日报agent_prd_开发确认版.md`
 
 ## 启动
 
+首次运行或前端变更后，安装依赖并构建生产 WebUI：
+
 ```powershell
+npm install
+npm run frontend:build
+```
+
+推荐双击 `启动AI投资情报Agent.bat`，它会构建 WebUI、以 external 调度模式启动 FastAPI，并在浏览器中打开应用。也可以手动启动：
+
+```powershell
+$env:VC_NEWS_SCHEDULER_MODE='external'
 .\.venv\Scripts\python.exe -B app.py
 ```
 
@@ -52,16 +62,16 @@ Dashboard 与报告工作区会显示最新自动运行状态、计数、告警�
 
 ### 调度模式
 
-桌面应用兼容保留内部 APScheduler，默认模式为 `internal`。使用 Codex 或其他外部调度器时，应显式设置：
+Codex Automation 是默认且唯一的调度方，WebUI 默认模式为 `external`，不会启动内部 APScheduler。只有明确不使用外部调度器时，才应手动选择 `internal`：
 
 ```powershell
-$env:VC_NEWS_SCHEDULER_MODE='external'
+$env:VC_NEWS_SCHEDULER_MODE='internal'
 ```
 
 支持的值：
 
-- `internal`：启动内部调度器与启动补抓；
-- `external`：不启动内部调度器，不执行启动补抓；
+- `external`：默认值；不启动内部调度器，不执行启动补抓；
+- `internal`：显式启用内部调度器与启动补抓；
 - `disabled`：仅保留人工执行。
 
 Headless CLI 本身永远不会启动 APScheduler。

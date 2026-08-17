@@ -154,6 +154,38 @@ class HeadlessOrchestrationTests(unittest.TestCase):
             self.assertEqual(latest["status"], "partial")
             self.assertTrue(Path(result.artifacts["html"]).exists())
 
+    def test_manifest_preserves_crawl_source_counts_when_report_stats_overlap(self):
+        def report_with_display_stats(_db, target_date, warnings=None):
+            payload = _report(_db, target_date, warnings)
+            payload["stats"] = {
+                "sources_attempted": 8,
+                "sources_succeeded": 8,
+                "failed_sources": 0,
+                "raw_items": 36,
+                "included_items": 12,
+            }
+            return payload
+
+        crawl = lambda _db, _date: {
+            "status": "partial",
+            "total_items": 65,
+            "new_items": 35,
+            "failed_items": 2,
+            "sources_attempted": 23,
+            "sources_succeeded": 21,
+            "sources_failed": 2,
+            "failed_source_names": ["LatePost", "Product Hunt"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = _runner(Path(directory), crawl=crawl, report=report_with_display_stats).run(DailyRunOptions())
+
+            self.assertEqual(result.counts["sources_attempted"], 23)
+            self.assertEqual(result.counts["sources_succeeded"], 21)
+            self.assertEqual(result.counts["sources_failed"], 2)
+            self.assertEqual(result.counts["raw_items"], 65)
+            self.assertEqual(result.counts["included_items"], 12)
+            self.assertTrue(any("LatePost" in warning for warning in result.warnings))
+
     def test_lock_conflict_does_not_update_latest(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory) / "runs"

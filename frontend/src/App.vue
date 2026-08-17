@@ -6,7 +6,7 @@
           <div class="brand-mark">AI</div>
           <div>
             <strong>AI 投资情报</strong>
-            <span>Desktop Agent</span>
+            <span>Web Agent</span>
           </div>
         </div>
 
@@ -26,7 +26,7 @@
           <el-button size="small" :loading="backend.loading" @click="backend.boot()">重连后端</el-button>
           <el-button class="shutdown-button" size="small" type="danger" plain :loading="shuttingDown" @click="shutdownAndExit">
             <el-icon><SwitchButton /></el-icon>
-            <span>关闭服务并退出</span>
+            <span>关闭后端服务</span>
           </el-button>
         </div>
       </aside>
@@ -37,8 +37,7 @@
             <h1>{{ route.meta.title || "AI 投资情报 Agent" }}</h1>
             <p v-if="backend.message">{{ backend.message }}</p>
           </div>
-          <el-tag v-if="backend.owned" type="success">Tauri 托管后端</el-tag>
-          <el-tag v-else type="info">外部后端</el-tag>
+          <el-tag type="info">WebUI</el-tag>
         </header>
 
         <el-alert
@@ -79,7 +78,6 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
-import { exitApplication } from "./api/client";
 import { useBackendStore } from "./stores/backend";
 
 const route = useRoute();
@@ -105,11 +103,11 @@ const navItems = [
 async function shutdownAndExit() {
   try {
     await ElMessageBox.confirm(
-      "将关闭 Python 后端服务并退出桌面应用。",
-      "关闭服务并退出",
+      "将关闭 Python 后端服务；当前浏览器页面随后将无法继续使用。",
+      "关闭后端服务",
       {
         type: "warning",
-        confirmButtonText: "关闭并退出",
+        confirmButtonText: "关闭服务",
         cancelButtonText: "取消",
       },
     );
@@ -120,10 +118,7 @@ async function shutdownAndExit() {
   shuttingDown.value = true;
   try {
     await backend.stop();
-    const closed = await exitApplication();
-    if (!closed) {
-      ElMessage.success("后端服务已请求关闭，请手动关闭浏览器标签页。");
-    }
+    ElMessage.success("后端服务已请求关闭，可以关闭当前浏览器标签页。");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     ElMessage.error(message);

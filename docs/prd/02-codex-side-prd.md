@@ -3,11 +3,11 @@
 > 状态：Ready for implementation
 > 版本：1.0
 > 日期：2026-08-17
-> 依赖：整体架构设计 PRD、VC-news-agent 提供稳定 Headless 契约
+> 依赖：整体架构设计 PRD、VC-news-agent-AI 提供稳定 Headless 契约
 
 ## Problem Statement
 
-用户需要 Codex 每天自动运行 VC News Agent 并交付 HTML 日报，但 Codex 不应进入 GUI 操作，也不应替代应用执行抓取、去重、LLM 分类和报告生成。若 Codex 依赖自然语言猜测运行是否成功、从不稳定路径寻找产物、看到错误后自行重做新闻研究，自动任务将不可预测且难以审计。
+用户需要 Codex 每天自动运行 VC-news-agent-AI 并交付 HTML 日报，但 Codex 不应进入 GUI 操作，也不应替代应用执行抓取、去重、LLM 分类和报告生成。若 Codex 依赖自然语言猜测运行是否成功、从不稳定路径寻找产物、看到错误后自行重做新闻研究，自动任务将不可预测且难以审计。
 
 本地任务还受到机器在线、Codex Desktop 运行状态、项目目录、Python 环境、SQLite 数据、密钥和网络权限的约束。Codex 侧需要一个最小、确定、可恢复的自动化方案，能够按明确状态处理成功、部分成功、重复任务、锁冲突和失败，并把正确的 HTML 成品呈现给用户。
 
@@ -15,7 +15,7 @@
 
 在 Codex Desktop 中创建绑定真实本地项目目录的每日 Automation。任务只执行两类稳定命令：运行前健康检查和每日 Headless 流水线。Codex 从命令 stdout 获取本次 manifest 位置，解析 manifest 和 report data，对 HTML 做确定性验收，然后根据退出码和状态交付 HTML、提示警告或报告失败。
 
-Codex 不启动 GUI、Tauri、浏览器或 FastAPI，不修改源代码，不直接读写业务数据库，不自行补充新闻。自动任务使用真实项目目录而非 worktree，以确保访问现有虚拟环境、数据库、密钥和 runtime 产物。正式自动化显式采用 external scheduler mode，避免与应用内部 APScheduler 重复触发。
+Codex 不启动 GUI、浏览器、WebUI 或 FastAPI，不修改源代码，不直接读写业务数据库，不自行补充新闻。自动任务使用真实项目目录而非 worktree，以确保访问现有虚拟环境、数据库、密钥和 runtime 产物。正式自动化采用 external scheduler mode，避免 WebUI 进程启动内部 APScheduler。
 
 Codex 侧的最高测试 seam 是“给定 Headless 的退出码、stdout 定位信息和产物集合，Codex 是否产生正确的用户交付结果”。
 

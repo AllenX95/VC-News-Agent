@@ -1,5 +1,5 @@
 {
-  "name": "ai-investment-agent-gui",
+  "name": "vc-news-agent-ai-webui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,6 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
-    "@tauri-apps/api": "^2.9.0",
-    "@tauri-apps/plugin-dialog": "^2.7.1",
     "element-plus": "^2.11.9",
     "pinia": "^3.0.4",
     "vue": "^3.5.25",

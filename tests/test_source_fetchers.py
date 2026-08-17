@@ -1,13 +1,108 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
+import requests
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from ai_agent.database import Base
 from ai_agent.models import Source
 from ai_agent.services import CrawlService, ExtractedItem
 
 
 class SourceFetcherTests(unittest.TestCase):
+    def test_product_hunt_uses_public_atom_feed_instead_of_blocked_homepage(self) -> None:
+        source = Source(
+            source_name="Product Hunt Today",
+            source_category="product_hunt",
+            source_url="https://www.producthunt.com/",
+            item_limit_per_run=2,
+            timeout_seconds=18,
+        )
+        feed = """<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <published>2026-08-17T01:00:00-07:00</published>
+            <link rel="alternate" href="https://www.producthunt.com/products/alpha" />
+            <title>Alpha</title>
+            <content type="html">&lt;p&gt;AI workflow assistant&lt;/p&gt;</content>
+          </entry>
+          <entry>
+            <published>2026-08-17T02:00:00-07:00</published>
+            <link rel="alternate" href="https://www.producthunt.com/products/beta" />
+            <title>Beta</title>
+            <content type="html">&lt;p&gt;Developer search engine&lt;/p&gt;</content>
+          </entry>
+        </feed>"""
+        service = CrawlService()
+        requested_urls: list[str] = []
+
+        def fake_get_html(url: str, timeout: int) -> str:
+            requested_urls.append(url)
+            return feed
+
+        service._get_html = fake_get_html
+
+        items = service.fetch_product_hunt(source)
+
+        self.assertEqual(requested_urls, ["https://www.producthunt.com/feed"])
+        self.assertEqual([item.title for item in items], ["Alpha", "Beta"])
+        self.assertEqual(items[0].summary, "AI workflow assistant")
+        self.assertEqual(items[0].publish_time, datetime(2026, 8, 17, 16, 0))
+        self.assertEqual(items[0].publish_time_status, "exact")
+
+    def test_get_html_retries_ssl_chain_with_aia_intermediate(self) -> None:
+        service = CrawlService()
+        recovered = Mock()
+        recovered.raise_for_status.return_value = None
+        recovered.apparent_encoding = "utf-8"
+        recovered.encoding = "utf-8"
+        recovered.text = "<html>recovered</html>"
+
+        with patch("ai_agent.services.requests.get", side_effect=requests.exceptions.SSLError("missing intermediate")):
+            with patch.object(service, "_get_with_aia_intermediate", return_value=recovered) as fallback:
+                html = service._get_html("https://www.latepost.com/", 18)
+
+        self.assertEqual(html, "<html>recovered</html>")
+        fallback.assert_called_once_with("https://www.latepost.com/", 18)
+
+    def test_run_all_sources_exposes_source_level_counts_for_manifest(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = Session(engine)
+        try:
+            db.add_all(
+                [
+                    Source(source_name="Good", source_category="ai_media", source_url="https://good.test"),
+                    Source(source_name="Bad", source_category="ai_media", source_url="https://bad.test"),
+                ]
+            )
+            db.commit()
+            service = CrawlService()
+
+            def fake_run_source(_db, source, **_kwargs):
+                if source.source_name == "Good":
+                    return SimpleNamespace(status="success", total_items=2, new_items=1, failed_items=0)
+                return SimpleNamespace(status="failed", total_items=0, new_items=0, failed_items=1)
+
+            service.run_source = fake_run_source
+            with patch("ai_agent.services.get_int_setting", return_value=1):
+                with patch("ai_agent.services.cleanup_expired", return_value=None):
+                    with patch("ai_agent.services.DailySummaryService.generate", return_value=None):
+                        result = service.run_all_sources(db, manual=True, run_timestamp=datetime(2026, 8, 17, 10, 0))
+
+            self.assertEqual(result.sources_attempted, 2)
+            self.assertEqual(result.sources_succeeded, 1)
+            self.assertEqual(result.sources_failed, 1)
+            self.assertEqual(result.failed_source_names, ["Bad"])
+        finally:
+            db.close()
+            engine.dispose()
+
     def test_article_window_is_previous_10_to_current_10_beijing(self) -> None:
         source = Source(
             source_name="Test Media",
