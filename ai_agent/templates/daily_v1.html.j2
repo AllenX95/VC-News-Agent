@@ -1,4 +1,12 @@
 <!doctype html>
+<!--
+  Daily report presentation contract:
+  Keep the three top-level sections, full-width news rows, title → summary →
+  source hierarchy, traceability attributes, and offline/print behavior stable.
+  Content generation may freely vary the headline, executive summary, dynamic
+  group names/order, item selection/order, summaries, and tags through
+  report_data. Do not generate or patch page HTML in the daily Codex workflow.
+-->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -7,95 +15,155 @@
   <meta name="template-version" content="{{ report.template_version }}">
   <title>{{ report.headline }} · {{ report.report_date }}</title>
   <style>
-    :root { color-scheme: light; --ink: #172033; --muted: #667085; --line: #d8dee9; --paper: #f7f8fb; --accent: #2656d9; --funding: #9b3c85; }
+    :root {
+      color-scheme: light;
+      --ink: #1d1d1f;
+      --secondary: #6e6e73;
+      --tertiary: #86868b;
+      --line: #d2d2d7;
+      --soft-line: #e8e8ed;
+      --paper: #fff;
+      --surface: #f5f5f7;
+      --accent: #0066cc;
+      --warning: #8a4b00;
+      --warning-bg: #fff7e8;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--paper); color: var(--ink); font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.55; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .page { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 64px; }
-    .masthead { display: flex; gap: 24px; justify-content: space-between; align-items: end; border-bottom: 3px solid var(--ink); padding-bottom: 18px; margin-bottom: 24px; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    a { color: inherit; text-decoration: none; }
+    a:focus-visible { outline: 3px solid rgba(0,102,204,.28); outline-offset: 5px; border-radius: 4px; }
     h1, h2, h3, p { margin-top: 0; }
-    h1 { margin-bottom: 4px; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.03em; }
-    h2 { font-size: 26px; margin-bottom: 16px; }
-    h3 { font-size: 17px; line-height: 1.35; margin-bottom: 8px; }
-    .date, .muted, .meta { color: var(--muted); font-size: 13px; }
-    .summary { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 24px; }
-    .stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; }
-    .stat { color: var(--muted); font-size: 13px; }
-    .stat strong { color: var(--ink); font-size: 16px; margin-right: 4px; }
-    .warnings { border-left: 4px solid #c28112; background: #fff8e8; padding: 12px 16px; margin: 0 0 24px; }
-    .warnings ul { margin: 6px 0 0; padding-left: 20px; }
-    .report-section { margin: 34px 0; }
-    .section-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
-    .group { margin: 20px 0 0; }
-    .group-title { color: var(--muted); font-size: 14px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; }
-    .report-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
-    .report-card.funding-card { border-top: 3px solid var(--funding); }
-    .card-summary { color: #344054; font-size: 14px; margin-bottom: 10px; }
-    .card-details { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; }
-    .badge { background: #eef2ff; border-radius: 999px; color: #304da2; padding: 2px 8px; font-size: 11px; }
-    .sources { border-top: 1px solid #edf0f4; margin-top: 12px; padding-top: 10px; }
-    .sources ul { margin: 5px 0 0; padding-left: 18px; font-size: 12px; }
-    .empty-state { border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); padding: 22px; text-align: center; background: rgba(255,255,255,.55); }
-    footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; margin-top: 46px; padding-top: 14px; }
-    @media (max-width: 640px) { .page { width: min(100% - 20px, 1180px); padding-top: 22px; } .masthead { align-items: start; flex-direction: column; gap: 6px; } .cards { grid-template-columns: 1fr; } }
-    @media print { body { background: #fff; } .page { width: 100%; padding: 0; } .report-card { break-inside: avoid; } a { color: inherit; text-decoration: none; } }
+    .page { width: min(1120px, calc(100% - 48px)); margin: 0 auto; padding: 0 0 72px; }
+    .masthead { padding: 72px 0 36px; border-bottom: 1px solid var(--line); }
+    .eyebrow { color: var(--accent); font-size: 13px; font-weight: 650; letter-spacing: .08em; margin-bottom: 14px; text-transform: uppercase; }
+    .masthead-row { display: flex; align-items: end; justify-content: space-between; gap: 32px; }
+    h1 { margin-bottom: 0; font-size: clamp(42px,7vw,76px); font-weight: 700; letter-spacing: -.055em; line-height: .98; }
+    .date-block { flex: 0 0 auto; color: var(--secondary); font-size: 14px; text-align: right; }
+    .date-block strong { display: block; color: var(--ink); font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
+    .summary { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 48px; align-items: end; padding: 32px 0; border-bottom: 1px solid var(--soft-line); }
+    .summary-copy { max-width: 760px; margin: 0; color: #424245; font-size: clamp(18px,2.2vw,23px); letter-spacing: -.015em; line-height: 1.45; }
+    .stats { display: flex; gap: 24px; align-items: end; }
+    .stat { color: var(--tertiary); font-size: 12px; line-height: 1.25; white-space: nowrap; }
+    .stat strong { display: block; color: var(--ink); font-size: 24px; font-weight: 600; letter-spacing: -.03em; }
+    .warnings { margin: 24px 0 0; padding: 14px 18px; border-left: 3px solid #d88400; background: var(--warning-bg); color: var(--warning); font-size: 13px; }
+    .warnings strong { font-weight: 650; }
+    .warnings ul { margin: 6px 0 0; padding-left: 18px; }
+    .report-section { margin: 68px 0 0; scroll-margin-top: 24px; }
+    .section-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+    .section-heading h2 { margin-bottom: 0; font-size: clamp(30px,4vw,44px); font-weight: 680; letter-spacing: -.045em; line-height: 1.05; }
+    .section-count { color: var(--secondary); font-size: 14px; white-space: nowrap; }
+    .group { margin-top: 32px; }
+    .group-title { margin-bottom: 8px; color: var(--secondary); font-size: 13px; font-weight: 650; letter-spacing: .055em; }
+    .news-list { border-top: 1px solid var(--soft-line); }
+    .news-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 22px;
+      gap: 28px;
+      padding: 26px 4px 25px;
+      border-bottom: 1px solid var(--soft-line);
+    }
+    .news-content { min-width: 0; }
+    .news-title { margin-bottom: 9px; font-size: clamp(20px,2.35vw,28px); font-weight: 650; letter-spacing: -.03em; line-height: 1.22; }
+    .news-title a:hover { color: var(--accent); }
+    .news-summary { max-width: 940px; margin-bottom: 15px; color: #424245; font-size: 16px; line-height: 1.65; }
+    .funding-line { margin: -3px 0 14px; color: var(--secondary); font-size: 14px; }
+    .source-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--tertiary); font-size: 13px; }
+    .source-name { color: var(--accent); font-weight: 550; }
+    .source-line .divider::before { content: "·"; margin-right: 10px; color: var(--line); }
+    .tag { padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--secondary); font-size: 11px; }
+    .arrow { align-self: center; color: var(--tertiary); font-size: 25px; font-weight: 300; line-height: 1; }
+    .sources { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--soft-line); color: var(--secondary); font-size: 12px; }
+    .sources-label { font-weight: 600; }
+    .sources ul { display: flex; flex-wrap: wrap; gap: 5px 18px; margin: 6px 0 0; padding: 0; list-style: none; }
+    .sources a { color: var(--accent); }
+    .sources a:hover { text-decoration: underline; text-underline-offset: 3px; }
+    .empty-state { padding: 28px 0; border-bottom: 1px solid var(--soft-line); color: var(--tertiary); font-size: 14px; }
+    footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--tertiary); font-size: 12px; }
+    @media (max-width: 720px) {
+      .page { width: min(100% - 28px,1120px); padding-bottom: 48px; }
+      .masthead { padding: 44px 0 24px; }
+      .masthead-row { align-items: start; flex-direction: column; gap: 18px; }
+      .date-block { text-align: left; }
+      .summary { grid-template-columns: 1fr; gap: 24px; padding: 24px 0; }
+      .stats { justify-content: space-between; gap: 14px; }
+      .report-section { margin-top: 52px; }
+      .news-row { grid-template-columns: minmax(0,1fr) 16px; gap: 12px; padding-block: 22px; }
+      .news-summary { font-size: 15px; }
+      .source-line .divider::before { margin-right: 7px; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *,*::before,*::after { transition: none !important; } }
+    @media print {
+      .page { width: 100%; padding: 0; }
+      .masthead { padding-top: 0; }
+      .news-row { break-inside: avoid; }
+      .arrow { display: none; }
+      .warnings { background: transparent; }
+    }
   </style>
 </head>
 <body>
   <div class="page" data-report-date="{{ report.report_date }}">
     <header class="masthead">
-      <div>
+      <div class="eyebrow">Daily Investment Intelligence</div>
+      <div class="masthead-row">
         <h1>{{ report.headline }}</h1>
-        <div class="date">{{ report.report_date }} · 模板 {{ report.template_version }}</div>
+        <div class="date-block"><strong>{{ report.report_date }}</strong>结构化日报 · 模板 {{ report.template_version }}</div>
       </div>
-      <div class="muted">结构化日报 / 可追溯版本</div>
     </header>
-
     <section class="summary" aria-label="日报摘要">
-      <p>{{ report.executive_summary }}</p>
+      <p class="summary-copy">{{ report.executive_summary }}</p>
       {% if report.stats %}
-      <div class="stats">
-        <span class="stat"><strong>{{ report.stats.included_items }}</strong>入选条目</span>
-        <span class="stat"><strong>{{ report.stats.raw_items }}</strong>原始条目</span>
-        <span class="stat"><strong>{{ report.stats.sources_succeeded }}</strong>个来源</span>
-        {% if report.stats.failed_sources %}<span class="stat"><strong>{{ report.stats.failed_sources }}</strong>个来源失败</span>{% endif %}
+      <div class="stats" aria-label="日报统计">
+        <span class="stat"><strong>{{ report.stats.included_items }}</strong>入选</span>
+        <span class="stat"><strong>{{ report.stats.raw_items }}</strong>原始</span>
+        <span class="stat"><strong>{{ report.stats.sources_succeeded }}</strong>来源</span>
       </div>
       {% endif %}
     </section>
-
     {% if report.warnings %}
     <aside class="warnings" aria-label="运行警告">
       <strong>运行提示</strong>
       <ul>{% for warning in report.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
     </aside>
     {% endif %}
-
     <main>
       {% for section in report.sections %}
       <section class="report-section" id="section-{{ section.key }}" data-report-section="{{ section.key }}">
         {% set section_count = namespace(value=0) %}{% for count_group in section.groups %}{% set section_count.value = section_count.value + (count_group['items'] | length) %}{% endfor %}
-        <div class="section-heading"><h2>{{ section.title }}</h2><span class="muted">{{ section_count.value }} 条</span></div>
+        <div class="section-heading"><h2>{{ section.title }}</h2><span class="section-count">{{ section_count.value }} 条</span></div>
         {% if section.groups %}
           {% for group in section.groups %}
           <div class="group" data-report-group="{{ group.title }}">
             <div class="group-title">{{ group.title }}</div>
             {% if group['items'] %}
-            <div class="cards">
+            <div class="news-list">
               {% for item in group['items'] %}
-              <article class="report-card{% if section.key == 'funding' %} funding-card{% endif %}" data-report-item{% if item.content_id is defined and item.content_id is not none %} data-content-id="{{ item.content_id }}"{% endif %}{% if item.event_id is defined and item.event_id is not none %} data-event-id="{{ item.event_id }}"{% endif %}>
-                <h3><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a></h3>
-                <p class="card-summary">{{ item.summary }}</p>
-                {% if item.company_name %}<div class="meta">{{ item.company_name }}{% if item.financing_round %} · {{ item.financing_round }}{% endif %}{% if item.amount %} · {{ item.amount }}{% endif %}</div>{% endif %}
-                <div class="card-details">
-                  <span class="badge">{{ item.source }}</span>
-                  {% if item.published_at %}<span class="meta">{{ item.published_at }}</span>{% endif %}
-                  {% for tag in item.tags or [] %}<span class="badge">{{ tag }}</span>{% endfor %}
+              <article class="news-row" data-report-item{% if item.content_id is defined and item.content_id is not none %} data-content-id="{{ item.content_id }}"{% endif %}{% if item.event_id is defined and item.event_id is not none %} data-event-id="{{ item.event_id }}"{% endif %}>
+                <div class="news-content">
+                  <h3 class="news-title"><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a></h3>
+                  <p class="news-summary">{{ item.summary }}</p>
+                  {% if item.company_name %}<div class="funding-line">{{ item.company_name }}{% if item.financing_round %} · {{ item.financing_round }}{% endif %}{% if item.amount %} · {{ item.amount }}{% endif %}</div>{% endif %}
+                  <div class="source-line">
+                    <span class="source-name">{{ item.source }}</span>
+                    {% if item.published_at %}<time class="divider" datetime="{{ item.published_at }}">{{ item.published_at }}</time>{% endif %}
+                    {% for tag in item.tags or [] %}<span class="tag">{{ tag }}</span>{% endfor %}
+                  </div>
+                  {% if item.sources %}
+                  <div class="sources"><span class="sources-label">合并来源（{{ item.sources | length }}）</span><ul>{% for source in item.sources %}<li><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.source }} · {{ source.title }}</a></li>{% endfor %}</ul></div>
+                  {% endif %}
                 </div>
-                {% if item.sources %}
-                <div class="sources"><span class="meta">合并来源（{{ item.sources | length }}）</span><ul>{% for source in item.sources %}<li><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.source }} · {{ source.title }}</a></li>{% endfor %}</ul></div>
-                {% endif %}
+                <span class="arrow" aria-hidden="true">›</span>
               </article>
               {% endfor %}
             </div>
@@ -108,8 +176,7 @@
       </section>
       {% endfor %}
     </main>
-
-    <footer>生成时间：{{ report.generated_at }} · 数据仅来自 VC News Agent 已入库记录，详情请打开原文核验。</footer>
+    <footer>生成时间：{{ report.generated_at }} · 数据来自 VC News Agent 已入库记录，详情请打开原文核验。</footer>
   </div>
 </body>
 </html>
