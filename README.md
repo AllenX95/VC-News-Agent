@@ -32,13 +32,17 @@ http://127.0.0.1:8011/
 .\.venv\Scripts\python.exe -m ai_agent.headless daily --date 2026-08-17 --force
 ```
 
-CLI 的 stdout 最后一行是机器可读 JSON，包含状态、退出码和本次 manifest 路径。每次运行会在 `data/runs/<日期>/<run-id>/` 下保存：
+CLI 的 stdout 最后一行是机器可读 JSON，包含状态、退出码和本次 manifest 路径。用户交付 HTML 保存在 `data/runs/report/`：
 
-- `run_manifest.json`
-- `report_data.json`
-- `daily.html`
-- `daily.md`
-- `run.log`
+- `<YYYYMMDD>-daily-report.html`
+
+运行支撑文件统一保存在 `data/runs/artifacts/`，通过日期和 run ID 区分：
+
+- `<YYYYMMDD>-<run-id>-run-manifest.json`
+- `<YYYYMMDD>-<run-id>-report-data.json`
+- `<YYYYMMDD>-<run-id>-daily-report.md`
+- `<YYYYMMDD>-<run-id>-run.log`
+- `<YYYYMMDD>-latest.json`
 
 日报 HTML 固定包含“技术进展、产业新闻、融资新闻”三个一级类目。
 

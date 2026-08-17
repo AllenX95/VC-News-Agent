@@ -22,14 +22,16 @@ class AutomationStatusReaderTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def _write_run(self, *, status: str, html: bool = True, warnings: list[str] | None = None) -> Path:
-        run_dir = self.runtime / self.target_date / "run-1"
-        run_dir.mkdir(parents=True, exist_ok=True)
+        artifacts_root = self.runtime / "artifacts"
+        report_root = self.runtime / "report"
+        artifacts_root.mkdir(parents=True, exist_ok=True)
+        report_root.mkdir(parents=True, exist_ok=True)
         artifacts: dict[str, str] = {}
         if html:
-            report = run_dir / "daily.html"
+            report = report_root / "20260817-daily-report.html"
             report.write_text("<html><body>daily</body></html>", encoding="utf-8")
             artifacts["html"] = str(report)
-        manifest = run_dir / "run_manifest.json"
+        manifest = artifacts_root / "20260817-run-1-run-manifest.json"
         manifest.write_text(
             json.dumps(
                 {
@@ -46,7 +48,7 @@ class AutomationStatusReaderTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (self.runtime / self.target_date / "latest.json").write_text(
+        (artifacts_root / "20260817-latest.json").write_text(
             json.dumps(
                 {
                     "schema_version": "1.0",
@@ -58,7 +60,7 @@ class AutomationStatusReaderTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        return run_dir
+        return report_root
 
     def test_missing_runtime_returns_explainable_missing_state(self) -> None:
         status = self.reader.get_status(self.target_date)
@@ -88,7 +90,7 @@ class AutomationStatusReaderTests(unittest.TestCase):
         self.assertEqual(json.loads(lock.read_text(encoding="utf-8"))["run_id"], "run-active")
 
     def test_success_resolves_html_and_exposes_counts(self) -> None:
-        run_dir = self._write_run(status="success")
+        runtime = self._write_run(status="success")
 
         status = self.reader.get_status(self.target_date)
         report = self.reader.resolve_latest_html(self.target_date)
@@ -96,7 +98,7 @@ class AutomationStatusReaderTests(unittest.TestCase):
         self.assertEqual(status["status"], "success")
         self.assertTrue(status["html_available"])
         self.assertEqual(status["counts"]["included_items"], 4)
-        self.assertEqual(report, run_dir / "daily.html")
+        self.assertEqual(report, runtime / "20260817-daily-report.html")
 
     def test_partial_report_keeps_warning_and_html_entry(self) -> None:
         self._write_run(status="partial", warnings=["one source failed"])
@@ -108,11 +110,11 @@ class AutomationStatusReaderTests(unittest.TestCase):
         self.assertIn("one source failed", status["warnings"])
 
     def test_manifest_path_traversal_is_never_served(self) -> None:
-        day_root = self.runtime / self.target_date
-        day_root.mkdir(parents=True)
+        artifacts_root = self.runtime / "artifacts"
+        artifacts_root.mkdir(parents=True)
         outside = Path(self.temp_dir.name) / "outside.html"
         outside.write_text("<html>outside</html>", encoding="utf-8")
-        (day_root / "latest.json").write_text(
+        (artifacts_root / "20260817-latest.json").write_text(
             json.dumps(
                 {
                     "target_date": self.target_date,

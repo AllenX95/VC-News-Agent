@@ -189,7 +189,7 @@ class DailyReportOutputTests(unittest.TestCase):
 
         report = build_daily_report_data(self.db, self.day.isoformat())
         with TemporaryDirectory() as directory:
-            output = render_daily_html(report, Path(directory) / "daily.html")
+            output = render_daily_html(report, Path(directory) / "20260817-daily-report.html")
             html = output.read_text(encoding="utf-8")
         soup = BeautifulSoup(html, "html.parser")
         cards = soup.select("[data-report-item]")
